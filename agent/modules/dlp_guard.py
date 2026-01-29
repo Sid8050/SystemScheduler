@@ -71,11 +71,11 @@ class DataLossGuard:
         return False
         
     def _enforce_lockdown(self):
-        """Surgically enforce DLP without killing internet or processes."""
+        """Surgically enforce DLP by only blocking the file selection action."""
         self.logger.info(f"Applying Surgical DLP Policy: BlockAll={self.block_all}")
         
-        # 1. ALWAYS clear internet-killing blocks (Firewall/Proxy)
-        # We want browsers to ALWAYS open and browse.
+        # 1. Forcefully CLEAR all internet-killing blocks (Firewall/Proxy/URL Blacklists)
+        # This restores browsing for ALL sites (Google, WeTransfer, etc.)
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
             self._firewall_manager.unblock_domain("Global_Block_80")
@@ -86,49 +86,36 @@ class DataLossGuard:
             self._registry_manager.apply_url_blocklist([])
             
         # 2. Apply ONLY the surgical dialog block
+        # If block_all is True, we disable the 'Open File' window globally.
+        # However, if we have approved files, we temporarily ALLOW the window 
+        # so the user can select their approved file.
         if self._registry_manager:
-            # This only stops the 'Open File' window, does not kill the browser
-            self._registry_manager.set_browser_upload_policy(not self.block_all)
-        
-        # 3. Clear DNS
-        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
-
-    def _monitor_loop(self):
-        """Passive monitor only. No longer kills processes based on traffic volume."""
-        self.logger.info("Outbound Traffic Guard active (Passive Monitoring Only)")
-        while self._running:
-            time.sleep(10)
-
-
-    def start(self):
-        if self._running:
-            return
+            # If blocking is ON and we have NO approvals -> Disable Dialogs
+            # If blocking is ON and we HAVE approvals -> Enable Dialogs (Temporarily)
+            # If blocking is OFF -> Enable Dialogs
+            should_allow_dialogs = (not self.block_all) or (len(self._approved_hashes) > 0)
+            self._registry_manager.set_browser_upload_policy(should_allow_dialogs)
             
-        self._running = True
+            if self.block_all and not should_allow_dialogs:
+                self.logger.warning("Upload Lockdown: Windows File Picker has been DISABLED.")
+            elif self.block_all and should_allow_dialogs:
+                self.logger.info("Upload Lockdown: File Picker ENABLED due to active approval.")
         
-        # Apply policies
-        self._enforce_lockdown()
-
-        # Start the Traffic Monitor thread
-        import threading
-        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self._thread.start()
-        self.logger.info("Surgical DLP Guard started")
+        # 3. Clear DNS and Shell notifications
+        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
         old_block = self.block_all
-        old_whitelist = self.whitelist
         
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        if (block_all and not old_block) or (block_all and self.whitelist != old_whitelist):
-            self._enforce_lockdown()
-        elif not block_all and old_block:
-            self._cleanup_all_restrictions()
+        # Always re-enforce to ensure surgical precision and clear old blocks
+        self._enforce_lockdown()
             
         self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
+
 
     def update_approvals(self, dashboard_url: str, api_key: str):
         """Manually trigger an approval sync."""
