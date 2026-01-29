@@ -38,11 +38,13 @@ class DataLossGuard:
             pass
         return None
 
-    def _is_post_request(self, payload: bytes) -> bool:
-        return payload.startswith(b"POST ")
+    def _is_upload_request(self, payload: bytes) -> bool:
+        # Block POST, PUT, and PATCH as these are used for data transmission
+        return payload.startswith(b"POST ") or payload.startswith(b"PUT ") or payload.startswith(b"PATCH ")
 
     def _monitor_loop(self):
-        filter_str = "tcp.DstPort == 80 or tcp.DstPort == 443 and tcp.PayloadLength > 0"
+        # Improved filter logic
+        filter_str = "(tcp.DstPort == 80 or tcp.DstPort == 443) and tcp.PayloadLength > 0"
         
         try:
             with pydivert.WinDivert(filter_str) as w:
@@ -52,8 +54,7 @@ class DataLossGuard:
                         
                     payload = packet.payload
                     
-                    # Packet level blocking (best effort for HTTP)
-                    if self.block_all and self._is_post_request(payload):
+                    if self.block_all and self._is_upload_request(payload):
                         host = self._extract_host(payload)
                         is_whitelisted = False
                         if host:

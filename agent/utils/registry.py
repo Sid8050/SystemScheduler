@@ -352,7 +352,7 @@ class RegistryManager:
         if not self.write_value(
             RegistryHive.HKEY_LOCAL_MACHINE,
             self.CHROME_POLICY_PATH,
-            "FileUploadAllowed",
+            "FileSelectionDialogsEnabled",
             value,
             RegistryValueType.REG_DWORD
         ):
@@ -362,7 +362,7 @@ class RegistryManager:
         if not self.write_value(
             RegistryHive.HKEY_LOCAL_MACHINE,
             self.EDGE_POLICY_PATH,
-            "FileUploadAllowed",
+            "FileSelectionDialogsEnabled",
             value,
             RegistryValueType.REG_DWORD
         ):
