@@ -74,25 +74,28 @@ class DataLossGuard:
         """Surgically enforce DLP by only blocking the file selection action."""
         self.logger.info(f"Applying Surgical DLP Policy: BlockAll={self.block_all}")
         
-        # 1. Forcefully CLEAR all internet-killing blocks (Firewall/Proxy/URL Blacklists)
-        # This restores browsing for ALL sites (Google, WeTransfer, etc.)
+        # 1. KILL browsers to apply policies and clear internet-killing blocks
+        # We kill browsers on EVERY state change to ensure the user is not 'stuck' 
+        # with old proxy/firewall settings from previous versions.
+        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
+
+        # 2. Forcefully CLEAR all internet-killing blocks (Firewall/Proxy/URL Blacklists)
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
             self._firewall_manager.unblock_domain("Global_Block_80")
             self._firewall_manager.unblock_domain("Global_Block_443")
         
         if self._registry_manager:
+            # Thorough cleanup of Proxy settings
             self._registry_manager.set_system_proxy_lockdown(False)
+            # Thorough cleanup of URL blocklist (messaging apps/sharing sites)
             self._registry_manager.apply_url_blocklist([])
             
-        # 2. Apply ONLY the surgical dialog block
-        # If block_all is True, we disable the 'Open File' window globally.
-        # However, if we have approved files, we temporarily ALLOW the window 
-        # so the user can select their approved file.
+        # 3. Apply ONLY the surgical dialog block if enabled
         if self._registry_manager:
-            # If blocking is ON and we have NO approvals -> Disable Dialogs
-            # If blocking is ON and we HAVE approvals -> Enable Dialogs (Temporarily)
-            # If blocking is OFF -> Enable Dialogs
             should_allow_dialogs = (not self.block_all) or (len(self._approved_hashes) > 0)
             self._registry_manager.set_browser_upload_policy(should_allow_dialogs)
             
@@ -101,7 +104,7 @@ class DataLossGuard:
             elif self.block_all and should_allow_dialogs:
                 self.logger.info("Upload Lockdown: File Picker ENABLED due to active approval.")
         
-        # 3. Clear DNS and Shell notifications
+        # 4. Flush DNS and Shell notifications
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
 
     def set_config(self, block_all: bool, whitelist: List[str]):

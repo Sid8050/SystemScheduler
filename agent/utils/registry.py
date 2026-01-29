@@ -371,13 +371,14 @@ class RegistryManager:
             self.write_value(hive, path, "ProxyOverride", overrides, RegistryValueType.REG_SZ)
         else:
             self.write_value(hive, path, "ProxyEnable", 0, RegistryValueType.REG_DWORD)
+            self.delete_value(hive, path, "ProxyServer")
+            self.delete_value(hive, path, "ProxyOverride")
+            self.delete_value(hive, path, "AutoConfigURL")
             
         try:
             import ctypes
-            option_settings_changed = 39
-            option_refresh = 37
-            ctypes.windll.Wininet.InternetSetOptionW(0, option_settings_changed, 0, 0)
-            ctypes.windll.Wininet.InternetSetOptionW(0, option_refresh, 0, 0)
+            ctypes.windll.Wininet.InternetSetOptionW(0, 39, 0, 0)
+            ctypes.windll.Wininet.InternetSetOptionW(0, 37, 0, 0)
         except Exception:
             pass
             
@@ -426,12 +427,27 @@ class RegistryManager:
         for hive in hives:
             for base_path, value_name in paths:
                 full_path = f"{base_path}\\{value_name}"
+                
+                if not domains:
+                    self.delete_key(hive, full_path)
+                    continue
+
                 self.create_key(hive, full_path)
                 
                 for i, domain in enumerate(domains, 1):
                     if not self.write_value(hive, full_path, str(i), domain):
                         success = False
         return success
+
+    def delete_key(self, hive: RegistryHive, path: str) -> bool:
+        try:
+            import winreg
+            cmd = ["reg", "delete", f"{hive.value}\\{path}", "/f"]
+            subprocess.run(cmd, capture_output=True, check=False)
+            return True
+        except Exception:
+            return False
+
 
     def block_removable_storage(self) -> bool:
         """
