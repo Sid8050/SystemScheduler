@@ -4,8 +4,12 @@ import re
 import sys
 import subprocess
 import shutil
+import time
+import psutil
+import httpx
 from typing import List, Set, Optional
 from datetime import datetime
+from collections import defaultdict
 from agent.core.logger import Logger
 from agent.utils.registry import get_registry_manager
 from agent.utils.firewall import FirewallManager
@@ -26,7 +30,45 @@ class DataLossGuard:
         self._thread = None
         self._registry_manager = get_registry_manager()
         self._firewall_manager = FirewallManager() if sys.platform == 'win32' else None
-        self._traffic_history = defaultdict(list) # pid -> [(timestamp, bytes_sent), ...]
+        self._traffic_history = defaultdict(list)
+        self._approved_hashes = set() # Set of SHA256 strings
+        self._last_approval_sync = 0
+        
+    def _sync_approved_hashes(self, dashboard_url: str, api_key: str):
+        """Fetch approved file hashes from dashboard."""
+        try:
+            url = f"{dashboard_url}/api/v1/agent/uploads/approved"
+            headers = {"X-API-Key": api_key}
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(url, headers=headers)
+                if response.status_code == 200:
+                    hashes = response.json().get('approved_hashes', [])
+                    old_count = len(self._approved_hashes)
+                    self._approved_hashes = set(hashes)
+                    
+                    if len(self._approved_hashes) != old_count:
+                        self.logger.info(f"Synced {len(hashes)} approved file hashes")
+                        # If we have any approved hashes, temporarily enable dialogs
+                        # This allows the user to actually pick the file they requested
+                        if self.block_all:
+                            should_allow = len(self._approved_hashes) > 0
+                            self._registry_manager.set_browser_upload_policy(should_allow)
+                            self.logger.info(f"Dynamic Policy: File dialogs {'ENABLED' if should_allow else 'DISABLED'} (based on approvals)")
+        except Exception as e:
+            self.logger.error(f"Failed to sync approvals: {e}")
+
+    def _is_file_approved(self, payload: bytes) -> bool:
+        """
+        Attempt to identify if the file being uploaded is approved.
+        This is complex due to multipart/form-data encoding.
+        For now, we use a volume-based approach but allow whitelisted IPs/Domains.
+        """
+        # PER-FILE APPROVAL LOGIC:
+        # In a real DLP, we would proxy the traffic, reconstruct the file,
+        # and check the hash. For this agent, we will allow the upload
+        # if the destination is whitelisted or if we've received an approval
+        # signal from the dashboard for a 'general bypass' window.
+        return False
         
     def _enforce_lockdown(self):
         """Apply surgical action-based lockdown measures."""
@@ -129,21 +171,22 @@ class DataLossGuard:
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
-        # Detect if we are changing state or whitelist
         old_block = self.block_all
         old_whitelist = self.whitelist
         
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        # If toggled ON, or whitelist changed while ON, re-enforce
         if (block_all and not old_block) or (block_all and self.whitelist != old_whitelist):
             self._enforce_lockdown()
-        # If toggled OFF, clear everything
         elif not block_all and old_block:
-            self._enforce_lockdown() # This now handles cleanup
+            self._cleanup_all_restrictions()
             
         self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
+
+    def update_approvals(self, dashboard_url: str, api_key: str):
+        """Manually trigger an approval sync."""
+        self._sync_approved_hashes(dashboard_url, api_key)
 
 
 

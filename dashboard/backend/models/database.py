@@ -251,6 +251,53 @@ class USBWhitelist(Base):
         }
 
 
+class UploadRequest(Base):
+    """Workflow for file upload approvals."""
+    __tablename__ = "upload_requests"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    endpoint_id = Column(Integer, ForeignKey("endpoints.id"), nullable=False)
+    
+    # File Info
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(Text, nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True) # SHA-256
+    file_size = Column(Integer) # Bytes
+    
+    # Request Info
+    justification = Column(Text)
+    destination_site = Column(String(255))
+    status = Column(String(20), default="pending") # pending, approved, denied, expired
+    
+    # Workflow
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime)
+    reviewed_by = Column(Integer, ForeignKey("users.id"))
+    expires_at = Column(DateTime)
+    
+    # Relationships
+    endpoint = relationship("Endpoint")
+    reviewer = relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "endpoint_id": self.endpoint_id,
+            "hostname": self.endpoint.hostname if self.endpoint else "Unknown",
+            "file_name": self.file_name,
+            "file_path": self.file_path,
+            "file_hash": self.file_hash,
+            "file_size": self.file_size,
+            "justification": self.justification,
+            "destination_site": self.destination_site,
+            "status": self.status,
+            "requested_at": self.requested_at.isoformat() if self.requested_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "reviewer_name": self.reviewer.username if self.reviewer else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None
+        }
+
+
 # Database setup
 DATABASE_URL = "sqlite+aiosqlite:///./dashboard.db"
 

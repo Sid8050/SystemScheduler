@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 
 from ..models.database import (
-    get_db, Endpoint, Event, Policy, BlockedSite, USBWhitelist,
+    get_db, Endpoint, Event, Policy, BlockedSite, USBWhitelist, UploadRequest,
     EndpointStatus, EventSeverity
 )
 
@@ -71,11 +71,28 @@ class BlockedSiteCreate(BaseModel):
 
 
 class USBWhitelistCreate(BaseModel):
-    """Add USB device to whitelist."""
     vendor_id: str
     product_id: str
     serial_number: Optional[str] = None
     description: Optional[str] = None
+
+
+class UploadRequestCreate(BaseModel):
+    file_name: str
+    file_path: str
+    file_hash: str
+    file_size: int
+    justification: str
+    destination_site: Optional[str] = None
+
+
+class UploadRequestReview(BaseModel):
+    status: str # approved, denied
+    expiry_hours: int = 4 # How long the approval lasts
+
+
+# ... (rest of models)
+
 
 
 # Authentication helpers
@@ -629,6 +646,87 @@ async def remove_usb_whitelist(
     await db.commit()
     
     return {"status": "deleted"}
+
+
+# Upload Approvals API
+@router.get("/uploads/requests")
+async def list_upload_requests(
+    status: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all upload approval requests."""
+    query = select(UploadRequest).options(selectinload(UploadRequest.endpoint))
+    if status:
+        query = query.where(UploadRequest.status == status)
+    
+    result = await db.execute(query.order_by(UploadRequest.requested_at.desc()))
+    requests = result.scalars().all()
+    return {"requests": [r.to_dict() for r in requests]}
+
+
+@router.post("/agent/uploads/request")
+async def agent_submit_upload_request(
+    data: UploadRequestCreate,
+    endpoint: Endpoint = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """Agent submits a request to upload a file."""
+    request = UploadRequest(
+        endpoint_id=endpoint.id,
+        file_name=data.file_name,
+        file_path=data.file_path,
+        file_hash=data.file_hash,
+        file_size=data.file_size,
+        justification=data.justification,
+        destination_site=data.destination_site,
+        status="pending"
+    )
+    db.add(request)
+    await db.commit()
+    await db.refresh(request)
+    return request.to_dict()
+
+
+@router.get("/agent/uploads/approved")
+async def get_approved_uploads(
+    endpoint: Endpoint = Depends(verify_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """Agent fetches currently approved file hashes."""
+    result = await db.execute(
+        select(UploadRequest)
+        .where(UploadRequest.endpoint_id == endpoint.id)
+        .where(UploadRequest.status == "approved")
+        .where(UploadRequest.expires_at > datetime.utcnow())
+    )
+    approved = result.scalars().all()
+    return {"approved_hashes": [r.file_hash for r in approved]}
+
+
+@router.post("/uploads/requests/{request_id}/review")
+async def review_upload_request(
+    request_id: int,
+    data: UploadRequestReview,
+    db: AsyncSession = Depends(get_db),
+    # In real app, current_user = Depends(get_current_user)
+):
+    """Admin approves or denies an upload request."""
+    result = await db.execute(select(UploadRequest).where(UploadRequest.id == request_id))
+    request = result.scalar_one_or_none()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+        
+    request.status = data.status
+    request.reviewed_at = datetime.utcnow()
+    # request.reviewed_by = current_user.id
+    
+    if data.status == "approved":
+        from datetime import timedelta
+        request.expires_at = datetime.utcnow() + timedelta(hours=data.expiry_hours)
+        
+    await db.commit()
+    return request.to_dict()
 
 
 # Dashboard stats

@@ -336,6 +336,9 @@ class EndpointSecurityAgent:
                 
                 self.logger.info(f"Syncing DLP Policy: BlockAll={block_all}")
                 dlp_guard.set_config(block_all, whitelist)
+                
+                # Sync approved file hashes
+                dlp_guard.update_approvals(self.config.agent.dashboard_url, self.config.agent.api_key)
                     
         except Exception as e:
             self.logger.error(f"Error applying new config: {e}")
@@ -395,6 +398,21 @@ class EndpointSecurityAgent:
             self.logger.info("Self-protection guardian started")
         except Exception as e:
             self.logger.error(f"Failed to start guardian: {e}")
+
+
+    def request_upload_permission(self):
+        """Launch the UI to request upload permission for a file."""
+        try:
+            from agent.utils.request_ui import UploadRequestApp
+            app = UploadRequestApp(
+                dashboard_url=self.config.agent.dashboard_url,
+                api_key=self.config.agent.api_key
+            )
+            # Run in a separate thread to not block the main agent
+            threading.Thread(target=app.run, daemon=True).start()
+            self.logger.info("Upload Request UI launched")
+        except Exception as e:
+            self.logger.error(f"Failed to launch Upload Request UI: {e}")
 
 
     def start(self):
@@ -530,11 +548,24 @@ def main():
     subparsers.add_parser("start", help="Start Windows service")
     subparsers.add_parser("stop", help="Stop Windows service")
     subparsers.add_parser("status", help="Get service status")
+    subparsers.add_parser("request-upload", help="Request permission to upload a file")
     
     args = parser.parse_args()
     
     # Handle service commands
     if args.command:
+        if args.command == "request-upload":
+            # We need to load config to get dashboard URL and API key
+            from agent.core.config import Config
+            config = Config(args.config)
+            from agent.utils.request_ui import UploadRequestApp
+            app = UploadRequestApp(
+                dashboard_url=config.agent.dashboard_url,
+                api_key=config.agent.api_key
+            )
+            app.run()
+            return
+
         from agent.core.service import (
             install_service, uninstall_service, start_service, 
             stop_service, get_service_status, EndpointSecurityService

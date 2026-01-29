@@ -12,7 +12,8 @@ import {
   Calendar,
   Book,
   LogOut,
-  User
+  User,
+  FileUp
 } from 'lucide-react'
 
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -20,6 +21,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import Dashboard from './pages/Dashboard'
 import Endpoints from './pages/Endpoints'
 import Events from './pages/Events'
+import UploadRequests from './pages/UploadRequests'
 import USBControl from './pages/USBControl'
 import NetworkControl from './pages/NetworkControl'
 import Policies from './pages/Policies'
@@ -33,6 +35,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Endpoints', href: '/endpoints', icon: Monitor },
   { name: 'Events', href: '/events', icon: Bell },
+  { name: 'Upload Requests', href: '/uploads', icon: FileUp },
   { name: 'Schedules', href: '/schedules', icon: Calendar },
   { name: 'USB Control', href: '/usb', icon: Usb },
   { name: 'Network', href: '/network', icon: Globe },
@@ -144,6 +147,7 @@ function AppLayout() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/endpoints" element={<Endpoints />} />
           <Route path="/events" element={<Events />} />
+          <Route path="/uploads" element={<UploadRequests />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/usb" element={<USBControl />} />
           <Route path="/network" element={<NetworkControl />} />

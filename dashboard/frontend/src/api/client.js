@@ -94,6 +94,11 @@ export const api = {
   getUSBWhitelist: () => client.get('/usb-whitelist'),
   addUSBWhitelist: (data) => client.post('/usb-whitelist', data),
   removeUSBWhitelist: (id) => client.delete(`/usb-whitelist/${id}`),
+
+  // Upload Requests
+  getUploadRequests: (params) => client.get('/uploads/requests', { params }),
+  reviewUploadRequest: (id, status, expiry_hours = 4) => 
+    client.post(`/uploads/requests/${id}/review`, { status, expiry_hours }),
 }
 
 export default client
