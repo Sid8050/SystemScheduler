@@ -152,10 +152,15 @@ class HostsFileManager:
         redirect_ip = "127.0.0.1" 
         
         lines = [self.MARKER_START]
+        common_subs = ['www', 'm', 'api', 'mail', 'static', 'dev']
+        
         for domain in sorted(self._blocked_domains):
             lines.append(f"{redirect_ip} {domain}")
-            if not domain.startswith('www.'):
-                lines.append(f"{redirect_ip} www.{domain}")
+            
+            if not any(domain.startswith(sub + '.') for sub in common_subs):
+                for sub in common_subs:
+                    lines.append(f"{redirect_ip} {sub}.{domain}")
+                    
         lines.append(self.MARKER_END)
         
         return '\n'.join(lines)

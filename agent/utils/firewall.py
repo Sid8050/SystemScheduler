@@ -100,11 +100,23 @@ class FirewallManager:
             return False
 
     def resolve_domain(self, domain: str) -> List[str]:
-        """Resolve a domain name to all associated IP addresses."""
+        ips = set()
         try:
-            # Clean domain (remove wildcards if any for resolution)
             res_domain = domain.replace("*.", "")
-            _, _, ip_list = socket.gethostbyname_ex(res_domain)
-            return ip_list
+            
+            try:
+                _, _, ip_list = socket.gethostbyname_ex(res_domain)
+                ips.update(ip_list)
+            except Exception:
+                pass
+                
+            common_subs = ['www', 'mail', 'api', 'm', 'dev', 'static']
+            for sub in common_subs:
+                try:
+                    _, _, ip_list = socket.gethostbyname_ex(f"{sub}.{res_domain}")
+                    ips.update(ip_list)
+                except Exception:
+                    pass
         except Exception:
-            return []
+            pass
+        return list(ips)

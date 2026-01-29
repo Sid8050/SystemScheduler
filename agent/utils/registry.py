@@ -356,7 +356,13 @@ class RegistryManager:
             self.write_value(hive, path, "ProxyEnable", 1, RegistryValueType.REG_DWORD)
             self.write_value(hive, path, "ProxyServer", "127.0.0.1:9999", RegistryValueType.REG_SZ)
             
-            overrides = ";".join(whitelist or [])
+            formatted_whitelist = []
+            for domain in (whitelist or []):
+                if not domain.startswith('*.'):
+                    formatted_whitelist.append(f"*.{domain}")
+                formatted_whitelist.append(domain)
+            
+            overrides = ";".join(formatted_whitelist)
             if overrides:
                 overrides += ";<local>"
             else:
@@ -365,6 +371,15 @@ class RegistryManager:
             self.write_value(hive, path, "ProxyOverride", overrides, RegistryValueType.REG_SZ)
         else:
             self.write_value(hive, path, "ProxyEnable", 0, RegistryValueType.REG_DWORD)
+            
+        try:
+            import ctypes
+            option_settings_changed = 39
+            option_refresh = 37
+            ctypes.windll.Wininet.InternetSetOptionW(0, option_settings_changed, 0, 0)
+            ctypes.windll.Wininet.InternetSetOptionW(0, option_refresh, 0, 0)
+        except Exception:
+            pass
             
         return success
 
