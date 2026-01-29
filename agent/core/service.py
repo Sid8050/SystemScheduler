@@ -167,6 +167,22 @@ def set_service_recovery():
         print(f"Warning: Could not configure service recovery: {e}")
 
 
+def configure_service_path():
+    if sys.platform != 'win32':
+        return
+        
+    try:
+        import winreg
+        project_root = str(Path(__file__).parent.parent.parent.absolute())
+        
+        key_path = f"SYSTEM\\CurrentControlSet\\Services\\{EndpointSecurityService._svc_name_}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "PythonPath", 0, winreg.REG_SZ, project_root)
+        print(f"Service PythonPath configured: {project_root}")
+    except Exception as e:
+        print(f"Warning: Could not configure service PythonPath: {e}")
+
+
 def install_service():
     """Install the Windows service."""
     if sys.platform != 'win32':

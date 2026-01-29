@@ -550,9 +550,10 @@ def main():
             sys.argv = [sys.argv[0], cmd]
             win32serviceutil.HandleCommandLine(EndpointSecurityService)
             
-            # Post-install: Enable self-protection / recovery
+            # Post-install configuration
             if args.command == "install":
-                from agent.core.service import set_service_recovery
+                from agent.core.service import set_service_recovery, configure_service_path
+                configure_service_path()
                 set_service_recovery()
             return
             
