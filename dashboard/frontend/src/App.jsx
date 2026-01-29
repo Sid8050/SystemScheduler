@@ -138,7 +138,7 @@ function AppLayout() {
   return (
     <div className="flex min-h-screen bg-black text-slate-400 selection:bg-blue-500/30">
       <Sidebar />
-      <main className="flex-1 overflow-auto bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-opacity-20">
+      <main className="flex-1 overflow-auto bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
         <div className="min-h-full p-8">
           <Routes>
           <Route path="/" element={<Dashboard />} />
