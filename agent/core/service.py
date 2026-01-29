@@ -174,15 +174,18 @@ def configure_service_path():
     try:
         import winreg
         project_root = str(Path(__file__).parent.parent.parent.absolute())
+        svc_name = EndpointSecurityService._svc_name_
         
-        key_path = f"SYSTEM\\CurrentControlSet\\Services\\{EndpointSecurityService._svc_name_}\\Parameters"
-        
-        winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-        
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+        param_key_path = f"SYSTEM\\CurrentControlSet\\Services\\{svc_name}\\Parameters"
+        winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, param_key_path)
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, param_key_path, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "PythonPath", 0, winreg.REG_SZ, project_root)
             
-        print(f"Service Parameters configured in Registry at: {project_root}")
+        svc_key_path = f"SYSTEM\\CurrentControlSet\\Services\\{svc_name}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, svc_key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "Environment", 0, winreg.REG_MULTI_SZ, [f"PYTHONPATH={project_root}"])
+            
+        print(f"Service Environment and Path configured: {project_root}")
     except Exception as e:
         print(f"Warning: Could not configure service Registry: {e}")
 
