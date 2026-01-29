@@ -21,6 +21,10 @@ from datetime import datetime
 from collections import defaultdict
 from enum import Enum
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.registry import get_registry_manager
+from utils.firewall import FirewallManager
+
 # Windows-specific imports
 if sys.platform == 'win32':
     import psutil
@@ -460,20 +464,31 @@ class NetworkGuard:
         # Blocking implementations
         self._hosts_manager: Optional[HostsFileManager] = None
         self._dns_proxy: Optional[DNSProxy] = None
+        self._firewall_manager: Optional[FirewallManager] = None
+        self._registry_manager = get_registry_manager()
         
         # Monitoring state
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
+        self._resolver_thread: Optional[threading.Thread] = None
         self._connections: List[NetworkConnection] = []
         self._bandwidth: Dict[int, ProcessBandwidth] = {}
         self._connections_lock = threading.Lock()
     
     def _setup_blocking(self):
-        """Setup the configured blocking method."""
+        if self._registry_manager:
+            self._registry_manager.disable_browser_doh()
+            
+        if sys.platform == 'win32':
+            self._firewall_manager = FirewallManager()
+            
         if self.blocking_method == BlockingMethod.HOSTS:
             self._hosts_manager = HostsFileManager()
             self._hosts_manager.add_blocked_domains(list(self._blocked_domains))
             self._hosts_manager.apply_blocks()
+            
+            if self._firewall_manager:
+                self._update_firewall_rules()
         
         elif self.blocking_method == BlockingMethod.DNS_PROXY:
             self._dns_proxy = DNSProxy(
@@ -481,12 +496,36 @@ class NetworkGuard:
                 on_query=self._handle_dns_query
             )
             self._dns_proxy.start()
+            
+    def _update_firewall_rules(self):
+        if not self._firewall_manager:
+            return
+            
+        for domain in self._blocked_domains:
+            ips = self._firewall_manager.resolve_domain(domain)
+            if ips:
+                self._firewall_manager.block_ips(domain, ips)
+    
+    def _resolver_loop(self):
+        while self._running:
+            try:
+                self._update_firewall_rules()
+            except Exception:
+                pass
+            for _ in range(1800):
+                if not self._running:
+                    break
+                time.sleep(1)
     
     def _teardown_blocking(self):
-        """Remove blocking."""
         if self._hosts_manager:
             self._hosts_manager.clear_blocks()
             self._hosts_manager = None
+            
+        if self._firewall_manager:
+            for domain in self._blocked_domains:
+                self._firewall_manager.unblock_domain(domain)
+            self._firewall_manager = None
         
         if self._dns_proxy:
             self._dns_proxy.stop()
@@ -621,6 +660,9 @@ class NetworkGuard:
         # Start monitoring thread
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
+        
+        self._resolver_thread = threading.Thread(target=self._resolver_loop, daemon=True)
+        self._resolver_thread.start()
     
     def stop(self):
         """Stop network guard."""
@@ -629,6 +671,9 @@ class NetworkGuard:
         # Stop monitoring
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5)
+            
+        if self._resolver_thread:
+            self._resolver_thread.join(timeout=5)
         
         # Remove blocking
         self._teardown_blocking()
@@ -641,6 +686,11 @@ class NetworkGuard:
         if self._hosts_manager:
             self._hosts_manager.add_blocked_domains([domain_lower])
             self._hosts_manager.apply_blocks()
+            
+        if self._firewall_manager:
+            ips = self._firewall_manager.resolve_domain(domain_lower)
+            if ips:
+                self._firewall_manager.block_ips(domain_lower, ips)
     
     def remove_blocked_site(self, domain: str):
         """Remove a site from block list."""
@@ -650,6 +700,9 @@ class NetworkGuard:
         if self._hosts_manager:
             self._hosts_manager.remove_blocked_domains([domain_lower])
             self._hosts_manager.apply_blocks()
+            
+        if self._firewall_manager:
+            self._firewall_manager.unblock_domain(domain_lower)
     
     def is_site_blocked(self, domain: str) -> bool:
         """Check if a site is blocked."""

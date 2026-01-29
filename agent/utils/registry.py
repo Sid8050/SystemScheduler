@@ -58,6 +58,10 @@ class RegistryManager:
     REMOVABLE_STORAGE_PATH = r"SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices"
     USB_ENUM_PATH = r"SYSTEM\CurrentControlSet\Enum\USBSTOR"
     
+    CHROME_POLICY_PATH = r"SOFTWARE\Policies\Google\Chrome"
+    EDGE_POLICY_PATH = r"SOFTWARE\Policies\Microsoft\Edge"
+    FIREFOX_POLICY_PATH = r"SOFTWARE\Policies\Mozilla\Firefox"
+
     def __init__(self):
         if winreg is None:
             raise RuntimeError("Registry operations only available on Windows")
@@ -298,6 +302,48 @@ class RegistryManager:
         
         return devices
     
+    def disable_browser_doh(self) -> bool:
+        success = True
+        
+        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.CHROME_POLICY_PATH)
+        if not self.write_value(
+            RegistryHive.HKEY_LOCAL_MACHINE,
+            self.CHROME_POLICY_PATH,
+            "DnsOverHttpsMode",
+            "off"
+        ):
+            success = False
+            
+        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.EDGE_POLICY_PATH)
+        if not self.write_value(
+            RegistryHive.HKEY_LOCAL_MACHINE,
+            self.EDGE_POLICY_PATH,
+            "DnsOverHttpsMode",
+            "off"
+        ):
+            success = False
+            
+        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.FIREFOX_POLICY_PATH)
+        if not self.write_value(
+            RegistryHive.HKEY_LOCAL_MACHINE,
+            self.FIREFOX_POLICY_PATH,
+            "DNSOverHTTPS",
+            0,
+            RegistryValueType.REG_DWORD
+        ):
+            ff_nested = f"{self.FIREFOX_POLICY_PATH}\\DNSOverHTTPS"
+            self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, ff_nested)
+            if not self.write_value(
+                RegistryHive.HKEY_LOCAL_MACHINE,
+                ff_nested,
+                "Enabled",
+                0,
+                RegistryValueType.REG_DWORD
+            ):
+                success = False
+                
+        return success
+
     def block_removable_storage(self) -> bool:
         """
         Block all removable storage via Group Policy registry keys.
