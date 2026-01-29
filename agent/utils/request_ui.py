@@ -100,10 +100,14 @@ class UploadRequestApp:
             file_hash = self._get_hash(path)
             
             python_exe = sys.executable
-            main_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py")
+            # Ensure we get the absolute path to agent/main.py
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            main_script = os.path.join(os.path.dirname(current_dir), "main.py")
             
             # Pass the path and hash to the unlock command
-            subprocess.Popen([python_exe, main_script, "unlock-upload", path, file_hash])
+            # Using a list with Popen is the safest way to handle spaces in paths on Windows
+            subprocess.Popen([python_exe, main_script, "unlock-upload", path, file_hash], 
+                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             
             messagebox.showinfo("Security Window", "UPLOAD UNLOCKED!\n\n1. Go to your browser.\n2. Open the 'SecureUploadGateway' folder on your C: drive.\n3. Pick your file and upload.\n\nYou have 45 seconds.")
             self.root.destroy()

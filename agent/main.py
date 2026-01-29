@@ -546,18 +546,15 @@ def main():
     subparsers.add_parser("stop", help="Stop Windows service")
     subparsers.add_parser("status", help="Get service status")
     subparsers.add_parser("request-upload", help="Request permission to upload a file")
-    subparsers.add_parser("unlock-upload", help="Temporarily unlock file picker for approved file")
+    
+    unlock_parser = subparsers.add_parser("unlock-upload", help="Temporarily unlock file picker for approved file")
+    unlock_parser.add_argument("file_path", nargs="?", help="Path to the approved file")
+    unlock_parser.add_argument("file_hash", nargs="?", help="SHA256 hash of the approved file")
     
     args = parser.parse_args()
     
     # Handle service commands
     if args.command:
-        # Import service dependencies inside the command block
-        from agent.core.service import (
-            get_service_status, EndpointSecurityService
-        )
-        import win32serviceutil
-        
         if args.command == "request-upload":
             from agent.core.config import Config
             config = Config(args.config)
@@ -570,39 +567,9 @@ def main():
             return
             
         if args.command == "unlock-upload":
-            from agent.utils.registry import get_registry_manager
-            reg = get_registry_manager()
-            if reg:
-                print("[*] Unlocking file picker for 30 seconds...")
-                reg.set_browser_upload_policy(True)
-                import time
-                time.sleep(30)
-                reg.set_browser_upload_policy(False)
-                print("[*] Relocked.")
-            return
-
-        if args.command in ["install", "remove", "uninstall", "start", "stop", "restart"]:
-            cmd = "remove" if args.command == "uninstall" else args.command
-            sys.argv = [sys.argv[0], cmd]
-            win32serviceutil.HandleCommandLine(EndpointSecurityService)
+            file_path = args.file_path
+            file_hash = args.file_hash
             
-            if args.command == "install":
-                from agent.core.service import set_service_recovery, configure_service_path
-                configure_service_path()
-                set_service_recovery()
-            return
-            
-        if args.command == "status":
-            print(f"Service status: {get_service_status()}")
-        return
-            
-        if args.command == "unlock-upload":
-            # This is called by the UI tool after verifying the hash
-            file_path = sys.argv[2] if len(sys.argv) > 2 else ""
-            file_hash = sys.argv[3] if len(sys.argv) > 3 else ""
-            
-            # We communicate with the running agent service via a trigger file
-            # OR we just do it directly via registry for now as a bypass
             from agent.utils.registry import get_registry_manager
             reg = get_registry_manager()
             if reg and file_path:
@@ -611,7 +578,8 @@ def main():
                 # 1. Create the Gateway
                 gateway_dir = r"C:\Users\Public\SecureUploadGateway"
                 if os.path.exists(gateway_dir):
-                    shutil.rmtree(gateway_dir)
+                    import shutil
+                    shutil.rmtree(gateway_dir, ignore_errors=True)
                 os.makedirs(gateway_dir, exist_ok=True)
                 
                 # 2. Move only the approved file to the gateway
@@ -625,21 +593,23 @@ def main():
                 reg.set_browser_upload_policy(False)
                 
                 # 4. Cleanup
-                try: shutil.rmtree(gateway_dir)
+                try: shutil.rmtree(gateway_dir, ignore_errors=True)
                 except: pass
                 print("[*] SYSTEM RELOCKED.")
+            else:
+                print("[-] Error: Missing file path or registry manager.")
             return
 
+        from agent.core.service import (
+            get_service_status, EndpointSecurityService
+        )
         import win32serviceutil
         
         if args.command in ["install", "remove", "uninstall", "start", "stop", "restart"]:
-            # Use the standard pywin32 handler for these commands
-            # This ensures the service is registered with the correct Python path
             cmd = "remove" if args.command == "uninstall" else args.command
             sys.argv = [sys.argv[0], cmd]
             win32serviceutil.HandleCommandLine(EndpointSecurityService)
             
-            # Post-install configuration
             if args.command == "install":
                 from agent.core.service import set_service_recovery, configure_service_path
                 configure_service_path()
@@ -649,6 +619,7 @@ def main():
         if args.command == "status":
             print(f"Service status: {get_service_status()}")
         return
+
 
     # Default to foreground if no command and --foreground is set
     if args.foreground:
