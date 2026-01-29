@@ -229,7 +229,19 @@ async def delete_endpoint(
 
 async def get_merged_config(endpoint: Endpoint, db: AsyncSession) -> dict:
     """Get the latest configuration for an endpoint, merging global settings."""
-    config = (endpoint.config or {}).copy()
+    # ALWAYS pull fresh config from the assigned policy first
+    config = {}
+    if endpoint.policy_id:
+        result = await db.execute(
+            select(Policy).where(Policy.id == endpoint.policy_id)
+        )
+        policy = result.scalar_one_or_none()
+        if policy and policy.config:
+            config = policy.config.copy()
+    
+    # If no policy, fall back to endpoint snapshot
+    if not config:
+        config = (endpoint.config or {}).copy()
     
     # Merge global blocked sites
     result = await db.execute(select(BlockedSite))

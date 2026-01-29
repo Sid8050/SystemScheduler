@@ -59,34 +59,34 @@ class DataLossGuard:
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
+        # Kill browsers to force policy reload
+        if block_all:
+            self.logger.warning("Enforcing Lockdown: Terminating browsers to apply security policies...")
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
+        
         if self._registry_manager:
             # Iron-Clad Proxy Lockdown
-            # This kills all internet except whitelisted domains
             self._registry_manager.set_system_proxy_lockdown(block_all, list(self.whitelist))
             
-            # Browser policy lockdown
+            # Absolute Browser Policy
             self._registry_manager.set_browser_upload_policy(not block_all)
-            if block_all:
-                self._registry_manager.apply_url_blocklist(self.UPLOAD_SITE_BLACKLIST)
-            else:
-                self._registry_manager.apply_url_blocklist([])
-        
+            
         # Apply Firewall Lockdown
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
             if block_all:
-                self.logger.info("Enacting Absolute Network Lockdown for Browsers...")
                 browsers = self._get_browser_paths()
                 for b_path in browsers:
                     self._firewall_manager.block_browser_outbound(b_path)
                 
-                # Allow whitelisted domains
                 for domain in self.whitelist:
                     ips = self._firewall_manager.resolve_domain(domain)
                     if ips:
                         self._firewall_manager.allow_domain_for_browser(domain, ips)
             
-        self.logger.info(f"DLP Guard config updated: block_all={block_all}")
+        self.logger.info(f"DLP Guard synchronized with Dashboard. Lockdown: {'ACTIVE' if block_all else 'OFF'}")
 
     def _extract_host(self, payload: bytes) -> Optional[str]:
         try:
