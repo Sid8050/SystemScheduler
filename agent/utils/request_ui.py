@@ -90,16 +90,22 @@ class UploadRequestApp:
             self.status_label.config(text="❌ Error connecting to server", fg="#ef4444")
 
     def _unlock_system(self):
-        """Tell the main agent (via command line) to unlock for 30s."""
+        """Tell the main agent to unlock using the specifically approved file."""
         try:
-            # We use subprocess to call the main agent's unlock command
-            # This is safer than direct registry access from the UI
+            path = self.file_path_var.get()
+            if not path or not os.path.exists(path):
+                messagebox.showerror("Error", "Selected file not found.")
+                return
+                
+            file_hash = self._get_hash(path)
+            
             python_exe = sys.executable
             main_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py")
             
-            subprocess.Popen([python_exe, main_script, "unlock-upload"])
+            # Pass the path and hash to the unlock command
+            subprocess.Popen([python_exe, main_script, "unlock-upload", path, file_hash])
             
-            messagebox.showinfo("Security Window", "UPLOAD UNLOCKED! You have 30 seconds to select and attach your file in the browser.")
+            messagebox.showinfo("Security Window", "UPLOAD UNLOCKED!\n\n1. Go to your browser.\n2. Open the 'SecureUploadGateway' folder on your C: drive.\n3. Pick your file and upload.\n\nYou have 45 seconds.")
             self.root.destroy()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to unlock: {e}")

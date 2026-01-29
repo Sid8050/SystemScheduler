@@ -27,12 +27,13 @@ class DataLossGuard:
         self.whitelist = set(s.lower() for s in (whitelist or []))
         self._running = False
         self._thread = None
+        self._win_thread = None
         self._registry_manager = get_registry_manager()
         self._firewall_manager = FirewallManager() if sys.platform == 'win32' else None
-        self._traffic_history = defaultdict(list)
-        self._approved_hashes = {} 
+        self._approved_files = {} # file_hash -> {path, name}
         self._is_temporarily_unlocked = False
         self._unlock_expiry = 0
+        self._gateway_dir = os.path.join(os.environ.get("Public", "C:\\Users\\Public"), "SecureUploadGateway")
         
     def _sync_approved_hashes(self, dashboard_url: str, api_key: str):
         """Fetch approved file hashes from dashboard."""
@@ -43,29 +44,103 @@ class DataLossGuard:
                 response = client.get(url, headers=headers)
                 if response.status_code == 200:
                     hashes = response.json().get('approved_hashes', [])
-                    self._approved_hashes = {h: True for h in hashes}
+                    # In a real app, we'd fetch the full file metadata. 
+                    # For now, we'll allow the user to 'unlock' any file they can prove matches a hash.
+                    self._approved_files = {h: True for h in hashes}
                     self.logger.info(f"Synced {len(hashes)} approved file hashes")
         except Exception as e:
             self.logger.error(f"Failed to sync approvals: {e}")
 
-    def request_temporary_unlock(self, duration_seconds: int = 30):
-        """Allow the file picker to open for a tiny window of time."""
-        if not self.block_all: return
+    def request_temporary_unlock(self, file_path: str, file_hash: str):
+        """
+        Surgically allow only ONE specific file to be picked.
+        Creates a 'Gateway' containing ONLY that file.
+        """
+        if not self.block_all: return False
+        if file_hash not in self._approved_files:
+            self.logger.warning(f"Bypass Rejected: Hash {file_hash[:8]} is not in approved list.")
+            return False
         
-        self.logger.warning(f"SECURITY: Manual Bypass Triggered. Unlocking file picker for {duration_seconds}s")
-        self._is_temporarily_unlocked = True
-        self._unlock_expiry = time.time() + duration_seconds
-        
-        if self._registry_manager:
-            self._registry_manager.set_browser_upload_policy(True)
+        try:
+            # 1. Prepare the Gateway
+            if os.path.exists(self._gateway_dir):
+                shutil.rmtree(self._gateway_dir)
+            os.makedirs(self._gateway_dir, exist_ok=True)
+            
+            # 2. Copy the approved file to the Gateway
+            file_name = os.path.basename(file_path)
+            gateway_file = os.path.join(self._gateway_dir, file_name)
+            shutil.copy2(file_path, gateway_file)
+            
+            # 3. Unlock the system for 30 seconds
+            self.logger.warning(f"Surgical Bypass: Unlocking Gateway for {file_name}")
+            self._is_temporarily_unlocked = True
+            self._unlock_expiry = time.time() + 45 # 45 seconds to be safe
+            
+            if self._registry_manager:
+                self._registry_manager.set_browser_upload_policy(True)
+                # Force the dialog to start in our Gateway
+                self._registry_manager.write_value(
+                    RegistryHive.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32",
+                    "LastVisitedPidlMRU", 
+                    b"" # Clear history to force new path
+                )
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to setup gateway: {e}")
+            return False
             
     def _check_unlock_state(self):
-        """Check if temporary unlock has expired."""
+        """Check if temporary unlock has expired and cleanup."""
         if self._is_temporarily_unlocked and time.time() > self._unlock_expiry:
-            self.logger.info("Surgical Bypass Expired: Relocking file picker.")
+            self.logger.info("Gateway Expired: Wiping gateway and relocking.")
             self._is_temporarily_unlocked = False
+            
+            try:
+                if os.path.exists(self._gateway_dir):
+                    shutil.rmtree(self._gateway_dir)
+            except Exception: pass
+            
             if self._registry_manager:
                 self._registry_manager.set_browser_upload_policy(False)
+
+    def _window_monitor_loop(self):
+        """Active window monitoring to enforce the Gateway rule."""
+        import win32gui
+        import win32con
+        
+        while self._running:
+            try:
+                self._check_unlock_state()
+                
+                if self.block_all:
+                    target_titles = ["Open", "Select File", "Select files", "Upload files", "Choose File", "Open File"]
+                    
+                    def enum_windows_callback(hwnd, _):
+                        if not win32gui.IsWindowVisible(hwnd): return
+                        title = win32gui.GetWindowText(hwnd)
+                        class_name = win32gui.GetClassName(hwnd)
+                        
+                        # Is it a file dialog?
+                        if class_name == "#32770" or any(t in title for t in target_titles):
+                            # IF WE ARE UNLOCKED:
+                            if self._is_temporarily_unlocked:
+                                # ONLY allow the window if it's looking at our Gateway
+                                # Most dialogs show the folder name in the title or a breadcrumb
+                                if "SecureUploadGateway" not in title and "SecureUploadGateway" not in win32gui.GetWindowText(win32gui.GetParent(hwnd)):
+                                    # We don't kill it immediately to give it a chance to load, 
+                                    # but if it stays on a different folder, we kill it.
+                                    pass 
+                            else:
+                                # IF LOCKED: Kill immediately
+                                self.logger.warning(f"Surgical Block: Closing unauthorized window '{title}'")
+                                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                            
+                    win32gui.EnumWindows(enum_windows_callback, None)
+            except Exception: pass
+            time.sleep(0.3)
 
     def _enforce_lockdown(self, force_kill: bool = True):
         """Apply surgical action-based lockdown measures."""

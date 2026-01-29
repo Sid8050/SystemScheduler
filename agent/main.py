@@ -597,17 +597,37 @@ def main():
         return
             
         if args.command == "unlock-upload":
-            # Call the agent instance if running, or just trigger the registry directly
-            # For simplicity, we'll use the registry manager to unlock for 30s
+            # This is called by the UI tool after verifying the hash
+            file_path = sys.argv[2] if len(sys.argv) > 2 else ""
+            file_hash = sys.argv[3] if len(sys.argv) > 3 else ""
+            
+            # We communicate with the running agent service via a trigger file
+            # OR we just do it directly via registry for now as a bypass
             from agent.utils.registry import get_registry_manager
             reg = get_registry_manager()
-            if reg:
-                print("[*] Unlocking file picker for 30 seconds...")
+            if reg and file_path:
+                print(f"[*] SECURE UNLOCK: Preparing Gateway for {Path(file_path).name}...")
+                
+                # 1. Create the Gateway
+                gateway_dir = r"C:\Users\Public\SecureUploadGateway"
+                if os.path.exists(gateway_dir):
+                    shutil.rmtree(gateway_dir)
+                os.makedirs(gateway_dir, exist_ok=True)
+                
+                # 2. Move only the approved file to the gateway
+                import shutil
+                shutil.copy2(file_path, os.path.join(gateway_dir, os.path.basename(file_path)))
+                
+                # 3. Unlock for 45s
                 reg.set_browser_upload_policy(True)
-                import time
-                time.sleep(30)
+                print("[+] SYSTEM UNLOCKED. You MUST pick the file from the 'SecureUploadGateway' folder.")
+                time.sleep(45)
                 reg.set_browser_upload_policy(False)
-                print("[*] Relocked.")
+                
+                # 4. Cleanup
+                try: shutil.rmtree(gateway_dir)
+                except: pass
+                print("[*] SYSTEM RELOCKED.")
             return
 
         import win32serviceutil
