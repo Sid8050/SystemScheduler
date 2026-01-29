@@ -8,6 +8,15 @@ from agent.core.logger import Logger
 from agent.utils.registry import get_registry_manager
 
 class DataLossGuard:
+    # High-risk upload/file sharing sites to block when DLP is enabled
+    UPLOAD_SITE_BLACKLIST = [
+        "wetransfer.com", "mega.nz", "dropbox.com", "drive.google.com", 
+        "mediafire.com", "4shared.com", "zippyshare.com", "rapidgator.net",
+        "sendspace.com", "transfer.pcloud.com", "file.io", "gofile.io",
+        "transfer.sh", "wormhole.app", "smash.com", "docsend.com",
+        "scribd.com", "issuu.com", "box.com", "icloud.com", "onedrive.live.com"
+    ]
+
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
         self.logger = logger
         self.block_all = block_all
@@ -23,9 +32,15 @@ class DataLossGuard:
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        # Enforce browser policies
+        # Enforce strict browser policies
         if self._registry_manager:
             self._registry_manager.set_browser_upload_policy(not block_all)
+            
+            # If blocking all uploads, also block common file sharing sites at the browser level
+            if block_all:
+                self._registry_manager.apply_url_blocklist(self.UPLOAD_SITE_BLACKLIST)
+            else:
+                self._registry_manager.apply_url_blocklist([]) # Clear blocklist
             
         self.logger.info(f"DLP Guard config updated: block_all={block_all}, whitelist_count={len(self.whitelist)}")
 

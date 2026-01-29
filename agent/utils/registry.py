@@ -348,26 +348,38 @@ class RegistryManager:
         success = True
         value = 1 if allowed else 0
         
-        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.CHROME_POLICY_PATH)
-        if not self.write_value(
-            RegistryHive.HKEY_LOCAL_MACHINE,
-            self.CHROME_POLICY_PATH,
-            "FileSelectionDialogsEnabled",
-            value,
-            RegistryValueType.REG_DWORD
-        ):
-            success = False
-            
-        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.EDGE_POLICY_PATH)
-        if not self.write_value(
-            RegistryHive.HKEY_LOCAL_MACHINE,
-            self.EDGE_POLICY_PATH,
-            "FileSelectionDialogsEnabled",
-            value,
-            RegistryValueType.REG_DWORD
-        ):
-            success = False
-            
+        hives = [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]
+        paths = [self.CHROME_POLICY_PATH, self.EDGE_POLICY_PATH]
+        
+        for hive in hives:
+            for path in paths:
+                self.create_key(hive, path)
+                if not self.write_value(hive, path, "FileSelectionDialogsEnabled", value, RegistryValueType.REG_DWORD):
+                    success = False
+                
+                if not self.write_value(hive, path, "ExternalProtocolDialogShowAlwaysAllowedHosts", [] if not allowed else None, RegistryValueType.REG_MULTI_SZ):
+                    pass
+
+        return success
+
+    def apply_url_blocklist(self, domains: List[str]) -> bool:
+        if sys.platform != 'win32': return False
+        
+        hives = [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]
+        paths = [
+            (self.CHROME_POLICY_PATH, "URLBlocklist"),
+            (self.EDGE_POLICY_PATH, "URLBlocklist")
+        ]
+        
+        success = True
+        for hive in hives:
+            for base_path, value_name in paths:
+                full_path = f"{base_path}\\{value_name}"
+                self.create_key(hive, full_path)
+                
+                for i, domain in enumerate(domains, 1):
+                    if not self.write_value(hive, full_path, str(i), domain):
+                        success = False
         return success
 
     def block_removable_storage(self) -> bool:
