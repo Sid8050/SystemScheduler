@@ -64,6 +64,47 @@ class FirewallManager:
         ]
         return self._run_command(cmd)
 
+    def block_all_web_traffic(self) -> bool:
+        success = True
+        cmd80 = [
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f'name="{self.RULE_PREFIX}Global_Block_80"',
+            "dir=out",
+            "action=block",
+            "protocol=TCP",
+            "remoteport=80",
+            "enable=yes"
+        ]
+        if not self._run_command(cmd80): success = False
+        
+        cmd443 = [
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f'name="{self.RULE_PREFIX}Global_Block_443"',
+            "dir=out",
+            "action=block",
+            "protocol=TCP",
+            "remoteport=443",
+            "enable=yes"
+        ]
+        if not self._run_command(cmd443): success = False
+        
+        return success
+
+    def allow_ip_outbound(self, name: str, ips: List[str]) -> bool:
+        if not ips: return True
+        ip_list = ",".join(ips)
+        rule_name = f"{self.RULE_PREFIX}Allow_IP_{name}"
+        
+        cmd = [
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f'name="{rule_name}"',
+            "dir=out",
+            "action=allow",
+            f'remoteip={ip_list}',
+            "enable=yes"
+        ]
+        return self._run_command(cmd)
+
     def block_browser_outbound(self, browser_name: str) -> bool:
         rule_name = f"{self.RULE_PREFIX}BrowserLock_{browser_name}"
         cmd = [

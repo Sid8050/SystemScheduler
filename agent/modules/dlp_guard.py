@@ -73,31 +73,39 @@ class DataLossGuard:
     def _enforce_lockdown(self):
         """Apply all configured lockdown measures."""
         if self.block_all:
-            self.logger.warning("Enforcing Lockdown: Terminating browsers to apply security policies...")
+            self.logger.warning("Enforcing Iron-Clad Lockdown...")
+            # Kill browsers
             subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
             subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
             subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
             subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
         
         if self._registry_manager:
-            # Iron-Clad Proxy Lockdown
+            # Registry policies
             self._registry_manager.set_system_proxy_lockdown(self.block_all, list(self.whitelist))
-            
-            # Absolute Browser Policy
             self._registry_manager.set_browser_upload_policy(not self.block_all)
             
-        # Apply Firewall Lockdown
         if self._firewall_manager:
+            # Clear previous locks
             self._firewall_manager.clear_browser_locks()
+            
             if self.block_all:
-                browsers = self._get_browser_paths()
-                for b_path in browsers:
-                    self._firewall_manager.block_browser_outbound(b_path)
+                # 1. Block ALL Web traffic (Port 80/443) system-wide
+                self._firewall_manager.block_all_web_traffic()
                 
+                # 2. Allow only Whitelisted domains
                 for domain in self.whitelist:
                     ips = self._firewall_manager.resolve_domain(domain)
                     if ips:
-                        self._firewall_manager.allow_domain_for_browser(domain, ips)
+                        self._firewall_manager.allow_ip_outbound(domain, ips)
+                
+                # 3. Always allow Dashboard/Localhost
+                self._firewall_manager.allow_ip_outbound("Dashboard", ["127.0.0.1"])
+                
+        # Flush DNS to ensure immediate effect
+        if self.block_all:
+            subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""

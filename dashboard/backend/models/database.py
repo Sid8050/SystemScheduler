@@ -86,6 +86,7 @@ class Endpoint(Base):
             "agent_version": self.agent_version,
             "os_version": self.os_version,
             "ip_address": self.ip_address,
+            "policy_id": self.policy_id,
             "stats": {
                 "files_backed_up": self.total_files_backed_up,
                 "backup_size": self.total_backup_size,
