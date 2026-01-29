@@ -464,7 +464,7 @@ async def update_policy(
 ):
     """Update a policy."""
     result = await db.execute(
-        select(Policy).where(Policy.id == policy_id)
+        select(Policy).options(selectinload(Policy.endpoints)).where(Policy.id == policy_id)
     )
     policy = result.scalar_one_or_none()
     

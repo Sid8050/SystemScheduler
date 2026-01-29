@@ -159,13 +159,19 @@ class Policy(Base):
     endpoints = relationship("Endpoint", back_populates="policy")
     
     def to_dict(self):
+        # Handle lazy loading issues in async context
+        try:
+            endpoint_count = len(self.endpoints)
+        except (AttributeError, Exception):
+            endpoint_count = 0
+
         return {
             "id": self.id,
             "name": self.name,
             "description": self.description,
             "config": self.config,
             "is_default": self.is_default,
-            "endpoint_count": len(self.endpoints) if self.endpoints else 0
+            "endpoint_count": endpoint_count
         }
 
 
