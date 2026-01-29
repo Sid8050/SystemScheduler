@@ -1,0 +1,425 @@
+"""
+Endpoint Security Agent - Main Entry Point
+
+This is the main agent that orchestrates all security modules:
+- File scanning and S3 backup
+- USB device control
+- Network monitoring and website blocking
+- Sensitive data detection
+"""
+
+import sys
+import signal
+import argparse
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+from datetime import datetime
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from agent.core.config import Config, get_config
+from agent.core.logger import Logger, setup_logger, EventType
+from agent.modules.file_scanner import FileScanner
+from agent.modules.usb_control import USBController, USBMode, USBDevice
+from agent.modules.network_guard import NetworkGuard, BlockingMethod
+from agent.modules.data_detector import DataDetector, Detection
+from agent.utils.s3_client import S3Client
+
+
+class EndpointSecurityAgent:
+    """
+    Main Endpoint Security Agent.
+    
+    Orchestrates all security modules and handles lifecycle.
+    """
+    
+    def __init__(self, config_path: Optional[Path] = None):
+        """Initialize the agent."""
+        # Load configuration
+        self.config = get_config(config_path)
+        
+        # Setup logging
+        self.logger = setup_logger(self.config)
+        
+        # Module instances
+        self.file_scanner: Optional[FileScanner] = None
+        self.usb_controller: Optional[USBController] = None
+        self.network_guard: Optional[NetworkGuard] = None
+        self.data_detector: Optional[DataDetector] = None
+        self.s3_client: Optional[S3Client] = None
+        
+        # State
+        self._running = False
+        self._heartbeat_thread: Optional[threading.Thread] = None
+    
+    def _init_s3_client(self) -> Optional[S3Client]:
+        """Initialize S3 client if backup is enabled."""
+        if not self.config.backup.enabled:
+            return None
+        
+        if not self.config.backup.s3.bucket:
+            self.logger.warning("S3 bucket not configured, backup disabled")
+            return None
+        
+        try:
+            return S3Client(
+                bucket=self.config.backup.s3.bucket,
+                region=self.config.backup.s3.region,
+                access_key_id=self.config.backup.s3.access_key_id,
+                secret_access_key=self.config.backup.s3.secret_access_key,
+                storage_class=self.config.backup.s3.storage_class,
+                max_mbps=self.config.backup.throttle_max_mbps if self.config.backup.throttle_enabled else None
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize S3 client: {e}")
+            return None
+    
+    def _init_file_scanner(self) -> Optional[FileScanner]:
+        """Initialize file scanner module."""
+        if not self.config.backup.enabled or not self.s3_client:
+            return None
+        
+        try:
+            return FileScanner(
+                scan_paths=self.config.backup.scan_paths,
+                exclude_paths=self.config.backup.exclude_paths,
+                exclude_patterns=self.config.backup.exclude_patterns,
+                s3_client=self.s3_client,
+                hash_db_path=self.config.backup.hash_db_path,
+                s3_prefix=self.config.get_s3_prefix(),
+                max_file_size_mb=self.config.backup.max_file_size_mb,
+                min_file_size_bytes=self.config.backup.min_file_size_bytes,
+                hash_algorithm=self.config.backup.hash_algorithm,
+                on_file_backed_up=self._on_file_backed_up,
+                on_file_changed=self._on_file_changed,
+                on_error=self._on_file_error
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize file scanner: {e}")
+            return None
+    
+    def _init_usb_controller(self) -> Optional[USBController]:
+        """Initialize USB controller module."""
+        if not self.config.usb.enabled:
+            return None
+        
+        try:
+            mode = USBMode(self.config.usb.mode)
+            
+            return USBController(
+                mode=mode,
+                block_mass_storage=self.config.usb.block_mass_storage,
+                block_mtp=self.config.usb.block_mtp,
+                block_ptp=self.config.usb.block_ptp,
+                whitelist=self.config.usb.whitelist,
+                on_device_connected=self._on_usb_connected,
+                on_device_blocked=self._on_usb_blocked,
+                on_file_operation=None  # TODO: Implement file operation monitoring
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize USB controller: {e}")
+            return None
+    
+    def _init_network_guard(self) -> Optional[NetworkGuard]:
+        """Initialize network guard module."""
+        if not self.config.network.enabled:
+            return None
+        
+        try:
+            method = BlockingMethod(self.config.network.blocking_method)
+            
+            return NetworkGuard(
+                blocking_method=method,
+                blocked_sites=self.config.network.blocked_sites,
+                blocked_categories=self.config.network.blocked_categories,
+                allowed_sites=self.config.network.allowed_sites,
+                log_connections=self.config.network.log_connections,
+                log_dns=self.config.network.log_dns,
+                track_bandwidth=self.config.network.track_bandwidth,
+                on_blocked=self._on_network_blocked,
+                on_connection=self._on_network_connection,
+                on_dns_query=self._on_dns_query
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize network guard: {e}")
+            return None
+    
+    def _init_data_detector(self) -> Optional[DataDetector]:
+        """Initialize data detector module."""
+        if not self.config.data_detection.enabled:
+            return None
+        
+        try:
+            return DataDetector(
+                detect_credit_cards=self.config.data_detection.detect_credit_cards,
+                detect_ssn=self.config.data_detection.detect_ssn,
+                detect_email=self.config.data_detection.detect_email,
+                detect_phone=self.config.data_detection.detect_phone,
+                detect_ip=self.config.data_detection.detect_ip,
+                custom_patterns=self.config.data_detection.custom_patterns,
+                scan_extensions=self.config.data_detection.scan_extensions,
+                on_detection=self._on_sensitive_data_found
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize data detector: {e}")
+            return None
+    
+    # Event handlers
+    def _on_file_backed_up(self, path: str, size: int, s3_key: str):
+        """Handle file backup completion."""
+        self.logger.file_backed_up(path, size, s3_key)
+    
+    def _on_file_changed(self, event_type: str, path: str):
+        """Handle file change event."""
+        self.logger.debug(f"File {event_type}: {path}")
+    
+    def _on_file_error(self, path: str, error: str):
+        """Handle file operation error."""
+        self.logger.file_backup_failed(path, error)
+    
+    def _on_usb_connected(self, device: USBDevice):
+        """Handle USB device connection."""
+        self.logger.usb_connected({
+            'device_id': device.device_id,
+            'vendor_id': device.vendor_id,
+            'product_id': device.product_id,
+            'description': device.description,
+            'drive_letter': device.drive_letter
+        })
+    
+    def _on_usb_blocked(self, device: USBDevice, reason: str):
+        """Handle USB device blocking."""
+        self.logger.usb_blocked({
+            'device_id': device.device_id,
+            'vendor_id': device.vendor_id,
+            'product_id': device.product_id,
+            'description': device.description
+        }, reason)
+    
+    def _on_network_blocked(self, domain: str, reason: str):
+        """Handle network blocking."""
+        self.logger.network_blocked(domain, reason)
+    
+    def _on_network_connection(self, conn):
+        """Handle network connection."""
+        self.logger.debug(
+            f"Connection: {conn.process_name} -> {conn.remote_address}:{conn.remote_port}"
+        )
+    
+    def _on_dns_query(self, query):
+        """Handle DNS query."""
+        if query.blocked:
+            self.logger.debug(f"DNS blocked: {query.domain}")
+    
+    def _on_sensitive_data_found(self, source: str, detection: Detection):
+        """Handle sensitive data detection."""
+        self.logger.sensitive_data_found(
+            source,
+            detection.data_type.value,
+            1
+        )
+    
+    def _heartbeat_loop(self):
+        """Heartbeat loop for dashboard sync."""
+        while self._running:
+            try:
+                # TODO: Send heartbeat to dashboard
+                # This would sync events and receive config updates
+                pass
+            except Exception as e:
+                self.logger.error(f"Heartbeat error: {e}")
+            
+            # Sleep for configured interval
+            for _ in range(self.config.agent.heartbeat_interval):
+                if not self._running:
+                    break
+                time.sleep(1)
+    
+    def start(self):
+        """Start the agent and all modules."""
+        if self._running:
+            return
+        
+        self._running = True
+        self.logger.agent_started()
+        
+        # Initialize modules
+        self.s3_client = self._init_s3_client()
+        self.file_scanner = self._init_file_scanner()
+        self.usb_controller = self._init_usb_controller()
+        self.network_guard = self._init_network_guard()
+        self.data_detector = self._init_data_detector()
+        
+        # Start modules
+        if self.file_scanner:
+            self.file_scanner.start_monitoring()
+            self.logger.info("File scanner started")
+        
+        if self.usb_controller:
+            self.usb_controller.start()
+            self.logger.info(f"USB controller started in {self.config.usb.mode} mode")
+        
+        if self.network_guard:
+            self.network_guard.start()
+            self.logger.info("Network guard started")
+        
+        # Start heartbeat thread
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+        
+        self.logger.info("Endpoint Security Agent fully started")
+    
+    def stop(self):
+        """Stop the agent and all modules."""
+        if not self._running:
+            return
+        
+        self._running = False
+        
+        # Stop modules
+        if self.file_scanner:
+            self.file_scanner.stop_monitoring()
+            self.logger.info("File scanner stopped")
+        
+        if self.usb_controller:
+            self.usb_controller.stop()
+            self.logger.info("USB controller stopped")
+        
+        if self.network_guard:
+            self.network_guard.stop()
+            self.logger.info("Network guard stopped")
+        
+        # Wait for heartbeat thread
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=5)
+        
+        self.logger.agent_stopped("normal")
+    
+    def run_initial_scan(self):
+        """Run initial file scan."""
+        if not self.file_scanner:
+            self.logger.warning("File scanner not initialized, skipping initial scan")
+            return
+        
+        self.logger.info("Starting initial file scan...")
+        
+        def progress(path, scanned, total):
+            if scanned % 1000 == 0:
+                self.logger.info(f"Scan progress: {scanned}/{total} files")
+        
+        self.file_scanner.scan_all(callback=progress)
+        
+        stats = self.file_scanner.get_statistics()
+        self.logger.info(f"Initial scan complete: {stats['total_files']} files, {stats['queue_size']} pending backup")
+    
+    def get_status(self) -> dict:
+        """Get agent status summary."""
+        status = {
+            'running': self._running,
+            'machine_id': self.config.agent.machine_id,
+            'hostname': self.config.agent.hostname,
+            'modules': {
+                'file_scanner': self.file_scanner is not None,
+                'usb_controller': self.usb_controller is not None,
+                'network_guard': self.network_guard is not None,
+                'data_detector': self.data_detector is not None
+            }
+        }
+        
+        if self.file_scanner:
+            status['backup_stats'] = self.file_scanner.get_statistics()
+        
+        if self.usb_controller:
+            status['usb_devices'] = len(self.usb_controller.get_connected_devices())
+        
+        if self.network_guard:
+            status['blocked_sites'] = len(self.network_guard.get_blocked_domains())
+        
+        return status
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description="Endpoint Security Agent")
+    parser.add_argument(
+        '--config', '-c',
+        type=Path,
+        help='Path to configuration file'
+    )
+    parser.add_argument(
+        '--service',
+        choices=['install', 'uninstall', 'start', 'stop', 'status'],
+        help='Service management commands (Windows only)'
+    )
+    parser.add_argument(
+        '--scan',
+        action='store_true',
+        help='Run initial file scan on startup'
+    )
+    parser.add_argument(
+        '--foreground', '-f',
+        action='store_true',
+        help='Run in foreground (not as service)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Handle service commands
+    if args.service:
+        from agent.core.service import (
+            install_service, uninstall_service, start_service, 
+            stop_service, get_service_status
+        )
+        
+        if args.service == 'install':
+            install_service()
+        elif args.service == 'uninstall':
+            uninstall_service()
+        elif args.service == 'start':
+            start_service()
+        elif args.service == 'stop':
+            stop_service()
+        elif args.service == 'status':
+            status = get_service_status()
+            print(f"Service status: {status}")
+        return
+    
+    # Run in foreground mode
+    agent = EndpointSecurityAgent(config_path=args.config)
+    
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        print("\nShutting down...")
+        agent.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Start agent
+    agent.start()
+    
+    # Run initial scan if requested
+    if args.scan:
+        agent.run_initial_scan()
+    
+    # Print status
+    print(f"\nEndpoint Security Agent running")
+    print(f"Machine ID: {agent.config.agent.machine_id}")
+    print(f"Press Ctrl+C to stop\n")
+    
+    # Keep running
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        agent.stop()
+
+
+if __name__ == '__main__':
+    main()

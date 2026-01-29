@@ -1,0 +1,252 @@
+# Endpoint Security Agent - Default Configuration
+# Copy to config.yaml and customize for your environment
+
+agent:
+  name: "EndpointSecurityAgent"
+  version: "1.0.0"
+  machine_id: null  # Auto-generated if null
+  heartbeat_interval: 60  # seconds
+  dashboard_url: "http://localhost:8000"
+  api_key: null  # Set after registering with dashboard
+
+# File Scanner & S3 Backup Module
+backup:
+  enabled: true
+  
+  # AWS S3 Configuration
+  s3:
+    bucket: "your-company-endpoint-backup"
+    region: "us-east-1"
+    prefix: "backups/{machine_id}/{date}/"
+    # Credentials: Use AWS CLI config, environment vars, or specify below
+    # access_key_id: null
+    # secret_access_key: null
+    storage_class: "STANDARD_IA"  # STANDARD, STANDARD_IA, GLACIER, DEEP_ARCHIVE
+    
+  # Paths to scan
+  scan_paths:
+    - "C:\\Users"
+    - "D:\\"
+    
+  # Paths to exclude (supports wildcards)
+  exclude_paths:
+    # System directories
+    - "C:\\Windows"
+    - "C:\\Windows.old"
+    - "C:\\Program Files"
+    - "C:\\Program Files (x86)"
+    - "C:\\ProgramData"
+    - "C:\\$Recycle.Bin"
+    - "C:\\System Volume Information"
+    - "C:\\PerfLogs"
+    - "C:\\Recovery"
+    - "C:\\MSOCache"
+    
+    # User temp/cache
+    - "*\\AppData\\Local\\Temp"
+    - "*\\AppData\\Local\\Microsoft\\Windows\\INetCache"
+    - "*\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cache"
+    - "*\\AppData\\Local\\Mozilla\\Firefox\\Profiles\\*\\cache2"
+    - "*\\AppData\\Roaming\\Microsoft\\Windows\\Recent"
+    
+    # Development artifacts
+    - "*\\node_modules"
+    - "*\\.git"
+    - "*\\__pycache__"
+    - "*\\.venv"
+    - "*\\venv"
+    - "*\\.idea"
+    - "*\\.vs"
+    - "*\\bin\\Debug"
+    - "*\\bin\\Release"
+    - "*\\obj"
+    
+  # File patterns to exclude
+  exclude_patterns:
+    - "*.tmp"
+    - "*.temp"
+    - "*.log"
+    - "*.cache"
+    - "*.bak"
+    - "~$*"  # Office temp files
+    - "thumbs.db"
+    - "desktop.ini"
+    - "*.lnk"
+    
+  # Size limits
+  max_file_size_mb: 500  # Skip files larger than this
+  min_file_size_bytes: 1  # Skip empty files
+  
+  # Schedule (cron format)
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  
+  # Incremental backup settings
+  incremental:
+    enabled: true
+    hash_algorithm: "sha256"
+    hash_db_path: "C:\\ProgramData\\EndpointSecurity\\hashes.db"
+    
+  # Bandwidth throttling
+  throttle:
+    enabled: false
+    max_mbps: 50  # Maximum upload speed
+    
+  # Encryption
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+    # key_file: null  # Path to encryption key file
+
+# USB Device Control Module
+usb_control:
+  enabled: true
+  
+  # Mode: block | monitor | whitelist
+  mode: "monitor"  # Start with monitor to see what's being used
+  
+  # Block settings
+  block:
+    mass_storage: true
+    mtp_devices: true  # Mobile phones in transfer mode
+    ptp_devices: false  # Cameras in picture transfer mode
+    
+  # Whitelist (only applies when mode = "whitelist")
+  whitelist:
+    # Example entries:
+    # - vid: "0x0781"
+    #   pid: "0x5567"
+    #   serial: null  # Optional: specific serial number
+    #   description: "SanDisk Cruzer"
+    - vid: "*"
+      pid: "*"
+      description: "Allow all (whitelist mode disabled)"
+      
+  # Logging
+  log_events: true
+  log_file_operations: true  # Log files copied to/from USB
+  
+  # Alert settings
+  alert_on_block: true
+  alert_on_unknown_device: true
+
+# Network Guard Module  
+network:
+  enabled: true
+  
+  # Website blocking
+  blocking:
+    enabled: true
+    method: "hosts"  # hosts | dns_proxy | wfp
+    
+    # Blocked domains (exact match or wildcard)
+    blocked_sites:
+      - "facebook.com"
+      - "*.facebook.com"
+      - "twitter.com"
+      - "*.twitter.com"
+      - "x.com"
+      - "*.x.com"
+      - "instagram.com"
+      - "*.instagram.com"
+      - "tiktok.com"
+      - "*.tiktok.com"
+      - "reddit.com"
+      - "*.reddit.com"
+      
+    # Category-based blocking
+    blocked_categories:
+      - "social_media"
+      - "gambling"
+      - "adult"
+      # - "streaming"
+      # - "gaming"
+      
+    # Whitelist (overrides blocks)
+    allowed_sites:
+      - "linkedin.com"  # Allow for business
+      
+  # Connection monitoring
+  monitoring:
+    enabled: true
+    log_connections: true
+    log_dns_queries: true
+    track_bandwidth: true
+    
+  # Process-based rules
+  process_rules:
+    # Example: Block specific apps from internet
+    # - process: "game.exe"
+    #   action: "block"
+    # - process: "backup.exe"
+    #   action: "allow"
+    #   bandwidth_limit_mbps: 10
+
+# Sensitive Data Detection
+data_detection:
+  enabled: true
+  
+  # Built-in patterns
+  detect:
+    credit_cards: true
+    ssn: true  # US Social Security Numbers
+    email_addresses: true
+    phone_numbers: true
+    ip_addresses: false
+    
+  # Custom patterns (regex)
+  custom_patterns:
+    - name: "Employee ID"
+      pattern: "EMP-\\d{6}"
+      severity: "medium"
+    - name: "Project Code"
+      pattern: "PROJ-[A-Z]{2}-\\d{4}"
+      severity: "low"
+      
+  # Actions
+  on_detection:
+    log: true
+    alert: true
+    block_upload: false  # Prevent upload to S3 if sensitive data found
+    
+  # File types to scan
+  scan_extensions:
+    - ".txt"
+    - ".csv"
+    - ".xlsx"
+    - ".docx"
+    - ".pdf"
+    - ".json"
+    - ".xml"
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  
+  # Local logging
+  local:
+    enabled: true
+    path: "C:\\ProgramData\\EndpointSecurity\\logs"
+    max_size_mb: 100
+    retention_days: 30
+    
+  # Sync logs to S3
+  s3_sync:
+    enabled: true
+    bucket: null  # Use backup bucket if null
+    prefix: "logs/{machine_id}/"
+    sync_interval: 3600  # seconds
+    
+  # Send to dashboard
+  dashboard_sync:
+    enabled: true
+    batch_size: 100
+    flush_interval: 60  # seconds
+
+# Windows Service Configuration
+service:
+  name: "EndpointSecurityAgent"
+  display_name: "Endpoint Security Agent"
+  description: "Monitors and protects endpoint data, controls USB devices, and manages network access"
+  start_type: "auto"  # auto | manual | disabled
+  recovery_action: "restart"  # restart | none
+  recovery_delay: 60000  # milliseconds
