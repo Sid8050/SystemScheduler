@@ -13,6 +13,9 @@ import signal
 import argparse
 import threading
 import time
+import httpx
+import json
+import socket
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -224,11 +227,35 @@ class EndpointSecurityAgent:
     
     def _heartbeat_loop(self):
         """Heartbeat loop for dashboard sync."""
+        self.logger.info("Heartbeat loop started")
+        
         while self._running:
             try:
-                # TODO: Send heartbeat to dashboard
-                # This would sync events and receive config updates
-                pass
+                # Prepare stats
+                stats = {}
+                if self.file_scanner:
+                    fs_stats = self.file_scanner.get_statistics()
+                    stats['files_backed_up'] = fs_stats.get('total_files', 0)
+                    stats['backup_size'] = fs_stats.get('total_size_bytes', 0)
+                
+                # Send heartbeat
+                url = f"{self.config.agent.dashboard_url}/api/v1/agent/heartbeat"
+                headers = {"X-API-Key": self.config.agent.api_key}
+                payload = {
+                    "status": "online",
+                    "stats": stats
+                }
+                
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.post(url, json=payload, headers=headers)
+                    
+                    if response.status_code == 200:
+                        new_config_data = response.json().get('config', {})
+                        if new_config_data:
+                            self._apply_new_config(new_config_data)
+                    else:
+                        self.logger.error(f"Heartbeat failed: {response.status_code} - {response.text}")
+                        
             except Exception as e:
                 self.logger.error(f"Heartbeat error: {e}")
             
@@ -237,11 +264,81 @@ class EndpointSecurityAgent:
                 if not self._running:
                     break
                 time.sleep(1)
-    
+
+    def _apply_new_config(self, config_data: dict):
+        """Apply new configuration received from dashboard."""
+        try:
+            # Update network blocking
+            if 'network' in config_data and self.network_guard:
+                network_cfg = config_data['network']
+                blocked_sites = network_cfg.get('blocked_sites', [])
+                
+                # Update blocked sites in guard
+                current_blocked = set(self.network_guard.get_blocked_domains())
+                new_blocked = set(s.lower() for s in blocked_sites)
+                
+                # Add new ones
+                for site in new_blocked - current_blocked:
+                    self.network_guard.add_blocked_site(site)
+                    self.logger.info(f"Added blocked site: {site}")
+                    
+                # Remove deleted ones
+                for site in current_blocked - new_blocked:
+                    self.network_guard.remove_blocked_site(site)
+                    self.logger.info(f"Removed blocked site: {site}")
+
+            # Update USB whitelist
+            if 'usb' in config_data and self.usb_controller:
+                usb_cfg = config_data['usb']
+                whitelist = usb_cfg.get('whitelist', [])
+                self.usb_controller.whitelist = whitelist
+                
+                if 'mode' in usb_cfg:
+                    self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
+                    
+        except Exception as e:
+            self.logger.error(f"Error applying new config: {e}")
+
+    def _register_agent(self) -> bool:
+        """Register agent with dashboard if API key is missing."""
+        if self.config.agent.api_key:
+            return True
+            
+        self.logger.info("Registering agent with dashboard...")
+        url = f"{self.config.agent.dashboard_url}/api/v1/endpoints/register"
+        payload = {
+            "machine_id": self.config.agent.machine_id,
+            "hostname": self.config.agent.hostname,
+            "agent_version": self.config.agent.version,
+            "os_version": sys.platform,
+            "ip_address": socket.gethostbyname(socket.gethostname())
+        }
+        
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(url, json=payload)
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    self.config.agent.api_key = data['api_key']
+                    # Save api_key to config file
+                    self.config.save()
+                    self.logger.info("Agent registered successfully")
+                    return True
+                else:
+                    self.logger.error(f"Registration failed: {response.status_code} - {response.text}")
+                    return False
+        except Exception as e:
+            self.logger.error(f"Registration error: {e}")
+            return False
+
     def start(self):
         """Start the agent and all modules."""
         if self._running:
             return
+        
+        # Register first
+        if not self._register_agent():
+            self.logger.error("Could not register agent, starting in offline mode")
         
         self._running = True
         self.logger.agent_started()

@@ -227,6 +227,39 @@ async def delete_endpoint(
     return {"status": "deleted"}
 
 
+async def get_merged_config(endpoint: Endpoint, db: AsyncSession) -> dict:
+    """Get the latest configuration for an endpoint, merging global settings."""
+    config = (endpoint.config or {}).copy()
+    
+    # Merge global blocked sites
+    result = await db.execute(select(BlockedSite))
+    blocked_sites = result.scalars().all()
+    
+    if 'network' not in config:
+        config['network'] = {}
+    
+    # Combine policy blocked sites with global blocked sites
+    policy_blocked = config['network'].get('blocked_sites', [])
+    global_blocked = [s.domain for s in blocked_sites]
+    config['network']['blocked_sites'] = list(set(policy_blocked + global_blocked))
+    
+    # Merge global USB whitelist
+    result = await db.execute(select(USBWhitelist))
+    usb_whitelist = result.scalars().all()
+    
+    if 'usb' not in config:
+        config['usb'] = {}
+        
+    policy_whitelist = config['usb'].get('whitelist', [])
+    global_whitelist = [
+        {'vid': d.vendor_id, 'pid': d.product_id, 'serial': d.serial_number, 'description': d.description}
+        for d in usb_whitelist
+    ]
+    config['usb']['whitelist'] = policy_whitelist + global_whitelist
+    
+    return config
+
+
 # Agent API (requires API key)
 @router.post("/agent/heartbeat")
 async def agent_heartbeat(
@@ -246,10 +279,12 @@ async def agent_heartbeat(
     
     await db.commit()
     
-    # Return updated config if changed
+    # Return merged config
+    config = await get_merged_config(endpoint, db)
+    
     return {
         "status": "ok",
-        "config": endpoint.config or {}
+        "config": config
     }
 
 
@@ -294,7 +329,7 @@ async def get_agent_config(
     db: AsyncSession = Depends(get_db)
 ):
     """Get configuration for agent."""
-    return endpoint.config or {}
+    return await get_merged_config(endpoint, db)
 
 
 # Events API
