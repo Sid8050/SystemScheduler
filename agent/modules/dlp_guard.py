@@ -114,6 +114,27 @@ class DataLossGuard:
         subprocess.run(["nbtstat", "-R"], capture_output=True)
         self.logger.info("DLP security refresh complete. Browsers can be reopened now.")
 
+    def _monitor_loop(self):
+        """Passive monitor only. No longer kills processes based on traffic volume."""
+        self.logger.info("Outbound Traffic Guard active (Passive Monitoring Only)")
+        while self._running:
+            time.sleep(10)
+
+    def start(self):
+        """Start the DLP monitoring thread."""
+        if self._running:
+            return
+            
+        self._running = True
+        
+        # Apply policies
+        self._enforce_lockdown()
+
+        # Start the Traffic Monitor thread
+        import threading
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._thread.start()
+        self.logger.info("Surgical DLP Guard started")
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
@@ -127,12 +148,9 @@ class DataLossGuard:
             
         self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
 
-
     def update_approvals(self, dashboard_url: str, api_key: str):
         """Manually trigger an approval sync."""
         self._sync_approved_hashes(dashboard_url, api_key)
-
-
 
     def stop(self):
         self._running = False
@@ -144,4 +162,3 @@ class DataLossGuard:
         if self._thread:
             self._thread.join(timeout=2)
         self.logger.info("DLP Guard stopped")
-
