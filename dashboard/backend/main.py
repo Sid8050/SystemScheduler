@@ -5,8 +5,9 @@ Central management server for Endpoint Security Agent.
 """
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from .models.database import init_db, engine, Base
@@ -54,6 +55,32 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(schedules_router, prefix="/api/v1/schedules", tags=["schedules"])
+
+# Middleware to handle redirects from blocked sites
+@app.middleware("http")
+async def block_redirect_middleware(request: Request, call_next):
+    # If the Host header doesn't match our known dashboard addresses,
+    # it's likely a blocked domain being redirected here via hosts file.
+    host = request.headers.get("host", "").split(":")[0]
+    is_local = host in ["localhost", "127.0.0.1", "0.0.0.0"]
+    
+    # Simple heuristic: if it's not a local address and not an expected dashboard IP,
+    # it's a blocked site. For local testing, we'll allow localhost/127.0.0.1.
+    # In production, you'd check against your actual server IP.
+    if not is_local and not request.url.path.startswith("/api"):
+        # For browser requests to non-dashboard hosts, we want to show the blocked page.
+        # However, FastAPI middleware is tricky with React routing. 
+        # We'll just let it pass and let the frontend handle the Host check or provide a specific /blocked endpoint.
+        pass
+        
+    response = await call_next(request)
+    return response
+
+@app.get("/blocked")
+async def get_blocked_info():
+    """Endpoint specifically for blocked site information."""
+    return {"status": "blocked", "message": "Access Denied by Policy"}
+
 
 
 @app.get("/")

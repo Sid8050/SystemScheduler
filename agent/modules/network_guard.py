@@ -145,12 +145,13 @@ class HostsFileManager:
         if not self._blocked_domains:
             return ""
         
+        redirect_ip = "127.0.0.1" 
+        
         lines = [self.MARKER_START]
         for domain in sorted(self._blocked_domains):
-            lines.append(f"0.0.0.0 {domain}")
-            # Also block www version if not already
+            lines.append(f"{redirect_ip} {domain}")
             if not domain.startswith('www.'):
-                lines.append(f"0.0.0.0 www.{domain}")
+                lines.append(f"{redirect_ip} www.{domain}")
         lines.append(self.MARKER_END)
         
         return '\n'.join(lines)

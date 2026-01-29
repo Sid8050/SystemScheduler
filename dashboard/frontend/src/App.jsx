@@ -24,6 +24,7 @@ import USBControl from './pages/USBControl'
 import NetworkControl from './pages/NetworkControl'
 import Policies from './pages/Policies'
 import Login from './pages/Login'
+import AccessDenied from './pages/AccessDenied'
 import Schedules from './pages/Schedules'
 import Settings from './pages/Settings'
 import Setup from './pages/Setup'
@@ -159,6 +160,12 @@ function AppLayout() {
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth()
   
+  const isDashboardHost = [
+    'localhost', 
+    '127.0.0.1', 
+    '0.0.0.0'
+  ].includes(window.location.hostname)
+
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
@@ -168,10 +175,15 @@ function AppRoutes() {
       </div>
     )
   }
+
+  if (!isDashboardHost) {
+    return <AccessDenied />
+  }
   
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/blocked" element={<AccessDenied />} />
       <Route path="/*" element={
         <ProtectedRoute>
           <AppLayout />
