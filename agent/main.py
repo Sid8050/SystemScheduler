@@ -494,82 +494,72 @@ class EndpointSecurityAgent:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Endpoint Security Agent")
-    parser.add_argument(
-        '--config', '-c',
-        type=Path,
-        help='Path to configuration file'
-    )
-    parser.add_argument(
-        '--service',
-        choices=['install', 'uninstall', 'start', 'stop', 'status'],
-        help='Service management commands (Windows only)'
-    )
-    parser.add_argument(
-        '--scan',
-        action='store_true',
-        help='Run initial file scan on startup'
-    )
-    parser.add_argument(
-        '--foreground', '-f',
-        action='store_true',
-        help='Run in foreground (not as service)'
-    )
+    parser.add_argument("--config", type=Path, help="Path to configuration file")
+    parser.add_argument("--foreground", action="store_true", help="Run in foreground (not as service)")
+    parser.add_argument("--scan", action="store_true", help="Run initial file scan")
+    
+    # Service commands
+    subparsers = parser.add_subparsers(dest="command", help="Service commands")
+    subparsers.add_parser("install", help="Install as Windows service")
+    subparsers.add_parser("uninstall", help="Uninstall Windows service")
+    subparsers.add_parser("start", help="Start Windows service")
+    subparsers.add_parser("stop", help="Stop Windows service")
+    subparsers.add_parser("status", help="Get service status")
     
     args = parser.parse_args()
     
     # Handle service commands
-    if args.service:
+    if args.command:
         from agent.core.service import (
             install_service, uninstall_service, start_service, 
             stop_service, get_service_status
         )
         
-        if args.service == 'install':
+        if args.command == "install":
             install_service()
-        elif args.service == 'uninstall':
+        elif args.command == "uninstall":
             uninstall_service()
-        elif args.service == 'start':
+        elif args.command == "start":
             start_service()
-        elif args.service == 'stop':
+        elif args.command == "stop":
             stop_service()
-        elif args.service == 'status':
-            status = get_service_status()
-            print(f"Service status: {status}")
+        elif args.command == "status":
+            print(f"Service status: {get_service_status()}")
         return
-    
-    # Run in foreground mode
-    agent = EndpointSecurityAgent(config_path=args.config)
-    
-    # Setup signal handlers for graceful shutdown
-    def signal_handler(signum, frame):
-        print("\nShutting down...")
-        agent.stop()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Start agent
-    agent.start()
-    
-    # Run initial scan if requested
-    if args.scan:
-        agent.run_initial_scan()
-    
-    # Print status
-    print(f"\nEndpoint Security Agent running")
-    print(f"Machine ID: {agent.config.agent.machine_id}")
-    print(f"Press Ctrl+C to stop\n")
-    
-    # Keep running
-    try:
+
+    # Default to foreground if no command and --foreground is set
+    if args.foreground:
+        agent = EndpointSecurityAgent(args.config)
+        
+        # Handle termination signals
+        def signal_handler(sig, frame):
+            print("\n[*] Stopping agent...")
+            agent.stop()
+            sys.exit(0)
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        agent.start()
+        
+        if args.scan:
+            agent.run_initial_scan()
+            
+        print("\nEndpoint Security Agent running")
+        print(f"Machine ID: {agent.config.agent.machine_id}")
+        print("Press Ctrl+C to stop\n")
+        
+        # Keep main thread alive
         while True:
             time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        agent.stop()
+    else:
+        # If no arguments provided on Windows, try to run as service
+        if sys.platform == 'win32' and not args.foreground:
+            from agent.core.service import EndpointSecurityService
+            import win32serviceutil
+            win32serviceutil.HandleCommandLine(EndpointSecurityService)
+        else:
+            parser.print_help()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

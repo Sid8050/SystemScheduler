@@ -426,23 +426,34 @@ async def list_policies(db: AsyncSession = Depends(get_db)):
     return {"policies": [p.to_dict() for p in policies]}
 
 
+from sqlalchemy.exc import IntegrityError
+
+# ... (rest of imports)
+
 @router.post("/policies")
 async def create_policy(
     data: PolicyCreate,
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new policy."""
-    policy = Policy(
-        name=data.name,
-        description=data.description,
-        config=data.config
-    )
-    
-    db.add(policy)
-    await db.commit()
-    await db.refresh(policy)
-    
-    return policy.to_dict()
+    try:
+        policy = Policy(
+            name=data.name,
+            description=data.description,
+            config=data.config
+        )
+        
+        db.add(policy)
+        await db.commit()
+        await db.refresh(policy)
+        
+        return policy.to_dict()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Policy with name '{data.name}' already exists")
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/policies/{policy_id}")
@@ -460,13 +471,20 @@ async def update_policy(
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
     
-    policy.name = data.name
-    policy.description = data.description
-    policy.config = data.config
-    
-    await db.commit()
-    
-    return policy.to_dict()
+    try:
+        policy.name = data.name
+        policy.description = data.description
+        policy.config = data.config
+        
+        await db.commit()
+        return policy.to_dict()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Policy with name '{data.name}' already exists")
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.post("/policies/{policy_id}/apply/{endpoint_id}")
