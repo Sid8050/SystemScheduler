@@ -69,11 +69,17 @@ class DataLossGuard:
 
     def _enforce_lockdown(self, force_kill: bool = True):
         """Apply surgical action-based lockdown measures."""
-        self.logger.info(f"DLP State: BlockAll={self.block_all}, Approvals={len(self._approved_hashes)}")
+        self.logger.info(f"DLP STATE REFRESH: BlockAll={self.block_all}, Approvals={len(self._approved_hashes)}")
         
+        # 1. Aggressive Browser Termination
         if force_kill:
-            self.logger.warning("Refreshing browser security context...")
+            self.logger.warning("FORCING browser termination to apply security rules...")
             browser_exes = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"]
+            # Try taskkill first (fast)
+            for exe in browser_exes:
+                subprocess.run(["taskkill", "/F", "/IM", exe, "/T"], capture_output=True)
+            
+            # Follow up with psutil for any survivors
             for proc in psutil.process_iter(['name']):
                 try:
                     if proc.info['name'].lower() in browser_exes:
@@ -81,6 +87,7 @@ class DataLossGuard:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
 
+        # 2. CLEAR internet blocks
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
         
@@ -88,13 +95,19 @@ class DataLossGuard:
             self._registry_manager.set_system_proxy_lockdown(False)
             self._registry_manager.apply_url_blocklist([])
             
+        # 3. Apply SURGICAL block
         if self._registry_manager:
-            # We STAY LOCKED even if we have approvals.
-            # The user must click 'Start Upload' in the Agent UI to get a 120s window.
-            should_allow_picker = not self.block_all or self._is_temporarily_unlocked
+            should_allow_picker = (not self.block_all) or (self._is_temporarily_unlocked)
             self._registry_manager.set_browser_upload_policy(should_allow_picker)
+            
+            if self.block_all:
+                status = "ENABLED (Temp Bypass)" if should_allow_picker else "DISABLED"
+                self.logger.warning(f"SECURITY POLICY: File selection is {status}")
         
+        # 4. Flush
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+        self.logger.info("DLP synchronization complete.")
+
 
     def _window_monitor_loop(self):
         """Active window monitoring to close unauthorized file picker dialogs."""
@@ -131,7 +144,7 @@ class DataLossGuard:
         while self._running:
             time.sleep(10)
 
-    def start(self):
+    def start_guard(self):
         """Start the DLP monitoring threads."""
         if self._running:
             return

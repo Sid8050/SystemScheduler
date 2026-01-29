@@ -449,7 +449,7 @@ class EndpointSecurityAgent:
             self.logger.info("Network guard started")
             
         if self.dlp_guard:
-            self.dlp_guard.start()
+            self.dlp_guard.start_guard()
             self.logger.info("DLP guard started")
         
         # Start heartbeat thread
@@ -552,6 +552,12 @@ def main():
     
     # Handle service commands
     if args.command:
+        # Import service dependencies inside the command block
+        from agent.core.service import (
+            get_service_status, EndpointSecurityService
+        )
+        import win32serviceutil
+        
         if args.command == "request-upload":
             from agent.core.config import Config
             config = Config(args.config)
@@ -562,6 +568,33 @@ def main():
             )
             app.run()
             return
+            
+        if args.command == "unlock-upload":
+            from agent.utils.registry import get_registry_manager
+            reg = get_registry_manager()
+            if reg:
+                print("[*] Unlocking file picker for 30 seconds...")
+                reg.set_browser_upload_policy(True)
+                import time
+                time.sleep(30)
+                reg.set_browser_upload_policy(False)
+                print("[*] Relocked.")
+            return
+
+        if args.command in ["install", "remove", "uninstall", "start", "stop", "restart"]:
+            cmd = "remove" if args.command == "uninstall" else args.command
+            sys.argv = [sys.argv[0], cmd]
+            win32serviceutil.HandleCommandLine(EndpointSecurityService)
+            
+            if args.command == "install":
+                from agent.core.service import set_service_recovery, configure_service_path
+                configure_service_path()
+                set_service_recovery()
+            return
+            
+        if args.command == "status":
+            print(f"Service status: {get_service_status()}")
+        return
             
         if args.command == "unlock-upload":
             # Call the agent instance if running, or just trigger the registry directly
