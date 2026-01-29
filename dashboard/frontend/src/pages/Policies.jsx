@@ -29,6 +29,7 @@ function Policies() {
     usb_control: { enabled: true, mode: 'monitor' },
     network: { enabled: true, blocking_enabled: true },
     data_detection: { enabled: true },
+    uploads: { block_all: false, whitelist: [] }
   }
   
   const [newPolicy, setNewPolicy] = useState({
@@ -44,6 +45,22 @@ function Policies() {
     }
   }
   
+  const handleEdit = (policy) => {
+    setEditingPolicy({ ...policy })
+    setShowForm(false)
+  }
+
+  const handleUpdate = async (e) => {
+    e.preventDefault()
+    try {
+      await api.updatePolicy(editingPolicy.id, editingPolicy)
+      queryClient.invalidateQueries(['policies'])
+      setEditingPolicy(null)
+    } catch (err) {
+      console.error('Failed to update policy:', err)
+    }
+  }
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
@@ -61,6 +78,50 @@ function Policies() {
           Create Policy
         </button>
       </div>
+      
+      {editingPolicy && (
+        <div className="bg-zinc-900/50 backdrop-blur-sm rounded-xl border border-zinc-800 p-6 animate-fade-in-up">
+          <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
+            <Edit className="w-5 h-5 text-blue-500" />
+            Edit Policy: {editingPolicy.name}
+          </h2>
+          
+          <form onSubmit={handleUpdate} className="space-y-8">
+            <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-500/10 rounded-lg">
+                    <Lock className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-white font-semibold">Block All Web Uploads</h3>
+                    <p className="text-xs text-zinc-500">Prevent files from being sent via HTTP POST</p>
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={editingPolicy.config?.uploads?.block_all || false}
+                    onChange={(e) => {
+                      const config = { ...editingPolicy.config }
+                      if (!config.uploads) config.uploads = { block_all: false, whitelist: [] }
+                      config.uploads.block_all = e.target.checked
+                      setEditingPolicy({ ...editingPolicy, config })
+                    }}
+                  />
+                  <div className="w-11 h-6 bg-zinc-700 rounded-full peer peer-checked:bg-purple-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium">Save Changes</button>
+              <button type="button" onClick={() => setEditingPolicy(null)} className="px-6 py-2 bg-zinc-800 text-zinc-300 rounded-lg font-medium">Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
       
       {/* Create Form */}
       {showForm && (
@@ -256,6 +317,12 @@ function Policies() {
                       Net
                     </span>
                   )}
+                  {policy.config?.uploads?.block_all && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Upload Block">
+                      <Lock className="w-3 h-3 mr-1" />
+                      Upl
+                    </span>
+                  )}
                   {policy.config?.data_detection?.enabled && (
                     <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20" title="DLP">
                       <Eye className="w-3 h-3 mr-1" />
@@ -269,7 +336,10 @@ function Policies() {
                 <span className="text-sm text-zinc-500 font-mono">
                   {policy.endpoint_count || 0} endpoints
                 </span>
-                <button className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-all">
+                <button 
+                  onClick={() => handleEdit(policy)}
+                  className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-all"
+                >
                   <Edit className="w-4 h-4" />
                 </button>
               </div>

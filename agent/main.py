@@ -28,6 +28,7 @@ from agent.core.logger import Logger, setup_logger, EventType
 from agent.modules.file_scanner import FileScanner
 from agent.modules.usb_control import USBController, USBMode, USBDevice
 from agent.modules.network_guard import NetworkGuard, BlockingMethod
+from agent.modules.dlp_guard import DataLossGuard
 from agent.modules.data_detector import DataDetector, Detection
 from agent.utils.s3_client import S3Client
 
@@ -51,6 +52,7 @@ class EndpointSecurityAgent:
         self.file_scanner: Optional[FileScanner] = None
         self.usb_controller: Optional[USBController] = None
         self.network_guard: Optional[NetworkGuard] = None
+        self.dlp_guard: Optional[DataLossGuard] = None
         self.data_detector: Optional[DataDetector] = None
         self.s3_client: Optional[S3Client] = None
         
@@ -148,6 +150,18 @@ class EndpointSecurityAgent:
             )
         except Exception as e:
             self.logger.error(f"Failed to initialize network guard: {e}")
+            return None
+
+    def _init_dlp_guard(self) -> Optional[DataLossGuard]:
+        """Initialize DLP (Upload Blocking) guard module."""
+        try:
+            return DataLossGuard(
+                logger=self.logger,
+                block_all=False, # Default to off until config received
+                whitelist=[]
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize DLP guard: {e}")
             return None
     
     def _init_data_detector(self) -> Optional[DataDetector]:
@@ -300,6 +314,23 @@ class EndpointSecurityAgent:
                 
                 if 'mode' in usb_cfg:
                     self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
+
+            # Update DLP (Upload) blocking
+            if 'uploads' in config_data and self.dlp_guard:
+                dlp_cfg = config_data['uploads']
+                block_all = dlp_cfg.get('block_all', False)
+                whitelist = dlp_cfg.get('whitelist', [])
+                
+                # Check if we need to start/stop the guard based on change
+                if block_all and not self.dlp_guard.block_all:
+                    self.dlp_guard.block_all = True
+                    self.dlp_guard.whitelist = set(s.lower() for s in whitelist)
+                    self.dlp_guard.start()
+                elif not block_all and self.dlp_guard.block_all:
+                    self.dlp_guard.stop()
+                    self.dlp_guard.block_all = False
+                else:
+                    self.dlp_guard.set_config(block_all, whitelist)
                     
         except Exception as e:
             self.logger.error(f"Error applying new config: {e}")
@@ -353,6 +384,7 @@ class EndpointSecurityAgent:
         self.file_scanner = self._init_file_scanner()
         self.usb_controller = self._init_usb_controller()
         self.network_guard = self._init_network_guard()
+        self.dlp_guard = self._init_dlp_guard()
         self.data_detector = self._init_data_detector()
         
         # Start modules
@@ -367,6 +399,10 @@ class EndpointSecurityAgent:
         if self.network_guard:
             self.network_guard.start()
             self.logger.info("Network guard started")
+            
+        if self.dlp_guard:
+            self.dlp_guard.start()
+            self.logger.info("DLP guard started")
         
         # Start heartbeat thread
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
@@ -393,6 +429,10 @@ class EndpointSecurityAgent:
         if self.network_guard:
             self.network_guard.stop()
             self.logger.info("Network guard stopped")
+            
+        if self.dlp_guard:
+            self.dlp_guard.stop()
+            self.logger.info("DLP guard stopped")
         
         # Wait for heartbeat thread
         if self._heartbeat_thread:

@@ -143,7 +143,12 @@ class Policy(Base):
     description = Column(Text)
     
     # Policy configuration (matches agent config structure)
-    config = Column(JSON, nullable=False, default={})
+    config = Column(JSON, nullable=False, default={
+        "files": {"enabled": True, "scan_paths": ["C:\\Users"]},
+        "usb": {"mode": "monitor"},
+        "network": {"blocked_sites": []},
+        "uploads": {"block_all": False, "whitelist": []}
+    })
     
     # Metadata
     is_default = Column(Boolean, default=False)
