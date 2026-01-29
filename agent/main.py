@@ -226,12 +226,17 @@ class EndpointSecurityAgent:
         )
     
     def _heartbeat_loop(self):
-        """Heartbeat loop for dashboard sync."""
         self.logger.info("Heartbeat loop started")
         
         while self._running:
+            # Only attempt heartbeat if we have an API key
+            if not self.config.agent.api_key:
+                time.sleep(5)
+                # Try to register again if key is missing
+                self._register_agent()
+                continue
+
             try:
-                # Prepare stats
                 stats = {}
                 if self.file_scanner:
                     fs_stats = self.file_scanner.get_statistics()
