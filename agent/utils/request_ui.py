@@ -28,11 +28,28 @@ class UploadRequestApp:
         header = tk.Label(self.root, text="UPLOAD PERMISSION REQUEST", bg="#09090b", foreground="#ffffff", font=("Inter", 14, "bold"), pady=20)
         header.pack()
         
+        # Check Status Section
+        status_frame = tk.Frame(self.root, bg="#18181b", padx=20, pady=10)
+        status_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.status_label = tk.Label(status_frame, text="Current Status: Checking...", bg="#18181b", foreground="#a1a1aa", font=("Inter", 9))
+        self.status_label.pack(side="left")
+        
+        self.btn_refresh = tk.Button(status_frame, text="Refresh Status", command=self._check_approvals, bg="#27272a", fg="#ffffff", border=0, font=("Inter", 8))
+        self.btn_refresh.pack(side="right")
+
+        self.btn_unlock = tk.Button(self.root, text="🔓 START APPROVED UPLOAD", command=self._unlock_system, bg="#059669", fg="#ffffff", activebackground="#047857", border=0, font=("Inter", 11, "bold"), pady=10)
+        self.btn_unlock.pack(fill="x", padx=20, pady=5)
+        self.btn_unlock.pack_forget() # Hidden by default
+        
+        # Separator
+        tk.Frame(self.root, height=1, bg="#27272a").pack(fill="x", padx=20, pady=15)
+        
         # File Section
         file_frame = tk.Frame(self.root, bg="#09090b", padx=20)
         file_frame.pack(fill="x")
         
-        tk.Label(file_frame, text="Select File to Upload:", bg="#09090b", foreground="#71717a").pack(anchor="w")
+        tk.Label(file_frame, text="Request New File:", bg="#09090b", foreground="#71717a").pack(anchor="w")
         
         self.file_path_var = tk.StringVar()
         entry = tk.Entry(file_frame, textvariable=self.file_path_var, bg="#18181b", fg="#ffffff", insertbackground="#ffffff", border=0, highlightthickness=1, highlightbackground="#27272a")
@@ -49,18 +66,41 @@ class UploadRequestApp:
         self.justification_text = tk.Text(just_frame, height=4, bg="#18181b", fg="#ffffff", insertbackground="#ffffff", border=0, highlightthickness=1, highlightbackground="#27272a", font=("Inter", 10))
         self.justification_text.pack(fill="x", pady=5)
         
-        # Destination
-        dest_frame = tk.Frame(self.root, bg="#09090b", padx=20)
-        dest_frame.pack(fill="x")
-        
-        tk.Label(dest_frame, text="Destination Website (optional):", bg="#09090b", foreground="#71717a").pack(anchor="w")
-        self.dest_var = tk.StringVar()
-        dest_entry = tk.Entry(dest_frame, textvariable=self.dest_var, bg="#18181b", fg="#ffffff", border=0, highlightthickness=1, highlightbackground="#27272a")
-        dest_entry.pack(fill="x", pady=5, ipady=5)
-        
         # Submit
-        self.btn_submit = tk.Button(self.root, text="SUBMIT REQUEST", command=self._submit, bg="#2563eb", fg="#ffffff", activebackground="#1d4ed8", border=0, font=("Inter", 11, "bold"), pady=10)
-        self.btn_submit.pack(fill="x", padx=20, pady=20)
+        self.btn_submit = tk.Button(self.root, text="SUBMIT NEW REQUEST", command=self._submit, bg="#2563eb", fg="#ffffff", activebackground="#1d4ed8", border=0, font=("Inter", 11, "bold"), pady=10)
+        self.btn_submit.pack(fill="x", padx=20, pady=15)
+        
+        self._check_approvals()
+
+    def _check_approvals(self):
+        try:
+            headers = {"X-API-Key": self.api_key}
+            response = httpx.get(f"{self.dashboard_url}/api/v1/agent/uploads/approved", headers=headers)
+            if response.status_code == 200:
+                hashes = response.json().get('approved_hashes', [])
+                if hashes:
+                    self.status_label.config(text=f"✅ {len(hashes)} files approved!", fg="#10b981")
+                    self.btn_unlock.pack(fill="x", padx=20, pady=5, before=self.btn_submit)
+                else:
+                    self.status_label.config(text="⏳ No approved files found.", fg="#a1a1aa")
+                    self.btn_unlock.pack_forget()
+        except Exception:
+            self.status_label.config(text="❌ Error connecting to server", fg="#ef4444")
+
+    def _unlock_system(self):
+        """Tell the main agent (via command line) to unlock for 30s."""
+        try:
+            # We use subprocess to call the main agent's unlock command
+            # This is safer than direct registry access from the UI
+            python_exe = sys.executable
+            main_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py")
+            
+            subprocess.Popen([python_exe, main_script, "unlock-upload"])
+            
+            messagebox.showinfo("Security Window", "UPLOAD UNLOCKED! You have 30 seconds to select and attach your file in the browser.")
+            self.root.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to unlock: {e}")
 
     def _browse_file(self):
         filename = filedialog.askopenfilename()

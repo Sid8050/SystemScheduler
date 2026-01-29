@@ -546,13 +546,13 @@ def main():
     subparsers.add_parser("stop", help="Stop Windows service")
     subparsers.add_parser("status", help="Get service status")
     subparsers.add_parser("request-upload", help="Request permission to upload a file")
+    subparsers.add_parser("unlock-upload", help="Temporarily unlock file picker for approved file")
     
     args = parser.parse_args()
     
     # Handle service commands
     if args.command:
         if args.command == "request-upload":
-            # We need to load config to get dashboard URL and API key
             from agent.core.config import Config
             config = Config(args.config)
             from agent.utils.request_ui import UploadRequestApp
@@ -562,11 +562,21 @@ def main():
             )
             app.run()
             return
+            
+        if args.command == "unlock-upload":
+            # Call the agent instance if running, or just trigger the registry directly
+            # For simplicity, we'll use the registry manager to unlock for 30s
+            from agent.utils.registry import get_registry_manager
+            reg = get_registry_manager()
+            if reg:
+                print("[*] Unlocking file picker for 30 seconds...")
+                reg.set_browser_upload_policy(True)
+                import time
+                time.sleep(30)
+                reg.set_browser_upload_policy(False)
+                print("[*] Relocked.")
+            return
 
-        from agent.core.service import (
-            install_service, uninstall_service, start_service, 
-            stop_service, get_service_status, EndpointSecurityService
-        )
         import win32serviceutil
         
         if args.command in ["install", "remove", "uninstall", "start", "stop", "restart"]:
