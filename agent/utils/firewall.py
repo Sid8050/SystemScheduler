@@ -64,17 +64,40 @@ class FirewallManager:
         ]
         return self._run_command(cmd)
 
-    def clear_all_blocks(self) -> bool:
-        """Remove all security-managed firewall rules."""
+    def block_browser_outbound(self, browser_name: str) -> bool:
+        rule_name = f"{self.RULE_PREFIX}BrowserLock_{browser_name}"
         cmd = [
-            "netsh", "advfirewall", "firewall", "delete", "rule",
-            f'name="all"',
-            f'description="Endpoint Security Managed Block Rule"'
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f'name="{rule_name}"',
+            "dir=out",
+            "action=block",
+            f'program="{browser_name}"',
+            "enable=yes"
         ]
-        # Since we use prefixes, it's safer to delete by name matching if possible,
-        # but netsh doesn't support wildcards in delete. 
-        # We'll rely on individual unblocks for now.
-        return True
+        return self._run_command(cmd)
+
+    def allow_domain_for_browser(self, domain: str, ips: List[str]) -> bool:
+        if not ips: return True
+        ip_list = ",".join(ips)
+        rule_name = f"{self.RULE_PREFIX}Allow_{domain}"
+        
+        cmd = [
+            "netsh", "advfirewall", "firewall", "add", "rule",
+            f'name="{rule_name}"',
+            "dir=out",
+            "action=allow",
+            f'remoteip={ip_list}',
+            "enable=yes"
+        ]
+        return self._run_command(cmd)
+
+    def clear_browser_locks(self) -> bool:
+        ps_cmd = f'Get-NetFirewallRule -DisplayName "{self.RULE_PREFIX}*" | Remove-NetFirewallRule'
+        try:
+            subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True)
+            return True
+        except Exception:
+            return False
 
     def resolve_domain(self, domain: str) -> List[str]:
         """Resolve a domain name to all associated IP addresses."""

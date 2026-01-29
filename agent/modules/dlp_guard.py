@@ -2,10 +2,13 @@ import pydivert
 import socket
 import re
 import sys
+import subprocess
+import shutil
 from typing import List, Set, Optional
 from datetime import datetime
 from agent.core.logger import Logger
 from agent.utils.registry import get_registry_manager
+from agent.utils.firewall import FirewallManager
 
 class DataLossGuard:
     # High-risk upload/file sharing sites to block when DLP is enabled
@@ -26,23 +29,59 @@ class DataLossGuard:
         self._approved_hashes = set()
         self._approved_destinations = set()
         self._registry_manager = get_registry_manager()
+        self._firewall_manager = FirewallManager() if sys.platform == 'win32' else None
         
+    def _get_browser_paths(self) -> List[str]:
+        """Find common browser executables on Windows."""
+        paths = []
+        if sys.platform != 'win32': return []
+        
+        # Check standard locations
+        search_dirs = [
+            os.environ.get("ProgramFiles", "C:\\Program Files"),
+            os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+            os.path.join(os.environ.get("LocalAppData", ""), "Google\\Chrome\\Application"),
+        ]
+        
+        executables = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"]
+        
+        for d in search_dirs:
+            if not os.path.exists(d): continue
+            for exe in executables:
+                # Recursive search for the exe
+                for root, _, files in os.walk(d):
+                    if exe in files:
+                        paths.append(os.path.join(root, exe))
+        return list(set(paths))
+
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        # Enforce strict browser policies
         if self._registry_manager:
             self._registry_manager.set_browser_upload_policy(not block_all)
-            
-            # If blocking all uploads, also block common file sharing sites at the browser level
             if block_all:
                 self._registry_manager.apply_url_blocklist(self.UPLOAD_SITE_BLACKLIST)
             else:
-                self._registry_manager.apply_url_blocklist([]) # Clear blocklist
+                self._registry_manager.apply_url_blocklist([])
+        
+        # Apply Firewall Lockdown
+        if self._firewall_manager:
+            self._firewall_manager.clear_browser_locks()
+            if block_all:
+                self.logger.info("Enacting Absolute Network Lockdown for Browsers...")
+                browsers = self._get_browser_paths()
+                for b_path in browsers:
+                    self._firewall_manager.block_browser_outbound(b_path)
+                
+                # Allow whitelisted domains
+                for domain in self.whitelist:
+                    ips = self._firewall_manager.resolve_domain(domain)
+                    if ips:
+                        self._firewall_manager.allow_domain_for_browser(domain, ips)
             
-        self.logger.info(f"DLP Guard config updated: block_all={block_all}, whitelist_count={len(self.whitelist)}")
+        self.logger.info(f"DLP Guard config updated: block_all={block_all}")
 
     def _extract_host(self, payload: bytes) -> Optional[str]:
         try:
