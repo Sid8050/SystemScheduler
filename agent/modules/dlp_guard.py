@@ -60,6 +60,11 @@ class DataLossGuard:
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
         if self._registry_manager:
+            # Iron-Clad Proxy Lockdown
+            # This kills all internet except whitelisted domains
+            self._registry_manager.set_system_proxy_lockdown(block_all, list(self.whitelist))
+            
+            # Browser policy lockdown
             self._registry_manager.set_browser_upload_policy(not block_all)
             if block_all:
                 self._registry_manager.apply_url_blocklist(self.UPLOAD_SITE_BLACKLIST)

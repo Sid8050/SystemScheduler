@@ -62,6 +62,9 @@ class RegistryManager:
     EDGE_POLICY_PATH = r"SOFTWARE\Policies\Microsoft\Edge"
     FIREFOX_POLICY_PATH = r"SOFTWARE\Policies\Mozilla\Firefox"
 
+    # Proxy paths
+    INTERNET_SETTINGS_PATH = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+
     def __init__(self):
         if winreg is None:
             raise RuntimeError("Registry operations only available on Windows")
@@ -342,6 +345,27 @@ class RegistryManager:
             ):
                 success = False
                 
+        return success
+
+    def set_system_proxy_lockdown(self, enabled: bool, whitelist: List[str] = None) -> bool:
+        success = True
+        hive = RegistryHive.HKEY_CURRENT_USER
+        path = self.INTERNET_SETTINGS_PATH
+        
+        if enabled:
+            self.write_value(hive, path, "ProxyEnable", 1, RegistryValueType.REG_DWORD)
+            self.write_value(hive, path, "ProxyServer", "127.0.0.1:9999", RegistryValueType.REG_SZ)
+            
+            overrides = ";".join(whitelist or [])
+            if overrides:
+                overrides += ";<local>"
+            else:
+                overrides = "<local>"
+            
+            self.write_value(hive, path, "ProxyOverride", overrides, RegistryValueType.REG_SZ)
+        else:
+            self.write_value(hive, path, "ProxyEnable", 0, RegistryValueType.REG_DWORD)
+            
         return success
 
     def set_browser_upload_policy(self, allowed: bool) -> bool:
