@@ -11,21 +11,11 @@ from agent.utils.registry import get_registry_manager
 from agent.utils.firewall import FirewallManager
 
 class DataLossGuard:
-    # High-risk upload/file sharing and messaging sites
-    UPLOAD_SITE_BLACKLIST = [
+    # High-risk upload/file sharing and messaging sites (Removed from total block)
+    # We now only use these for traffic monitoring priority
+    SENSITIVE_DOMAINS = [
         "wetransfer.com", "mega.nz", "dropbox.com", "drive.google.com", 
-        "mediafire.com", "4shared.com", "zippyshare.com", "rapidgator.net",
-        "sendspace.com", "transfer.pcloud.com", "file.io", "gofile.io",
-        "transfer.sh", "wormhole.app", "smash.com", "docsend.com",
-        "scribd.com", "issuu.com", "box.com", "icloud.com", "onedrive.live.com",
-        "web.whatsapp.com", "web.telegram.org", "discord.com", "slack.com",
-        "messenger.com", "facebook.com/messages"
-    ]
-    
-    # Desktop apps that allow file transfer
-    PROCESS_BLACKLIST = [
-        "WhatsApp.exe", "Telegram.exe", "OneDrive.exe", "Dropbox.exe",
-        "Box.exe", "Slack.exe", "Discord.exe"
+        "web.whatsapp.com", "web.telegram.org", "slack.com"
     ]
 
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
@@ -34,93 +24,108 @@ class DataLossGuard:
         self.whitelist = set(s.lower() for s in (whitelist or []))
         self._running = False
         self._thread = None
-        self._approved_hashes = set()
-        self._approved_destinations = set()
         self._registry_manager = get_registry_manager()
         self._firewall_manager = FirewallManager() if sys.platform == 'win32' else None
+        self._traffic_history = defaultdict(list) # pid -> [(timestamp, bytes_sent), ...]
         
-    def _get_browser_paths(self) -> List[str]:
-        """Find common browser executables on Windows."""
-        paths = []
-        if sys.platform != 'win32': return []
+    def _enforce_lockdown(self):
+        """Apply surgical action-based lockdown measures."""
+        self.logger.info(f"Enforcing Surgical DLP: BlockAll={self.block_all}")
         
-        # Check standard locations
-        search_dirs = [
-            os.environ.get("ProgramFiles", "C:\\Program Files"),
-            os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-            os.path.join(os.environ.get("LocalAppData", ""), "Google\\Chrome\\Application"),
-        ]
+        # 1. Clean up ALL internet-killing blocks (Firewall/Proxy)
+        # We want the user to browse freely
+        if self._firewall_manager:
+            self._firewall_manager.clear_browser_locks()
+            self._firewall_manager.unblock_domain("Global_Block_80")
+            self._firewall_manager.unblock_domain("Global_Block_443")
         
-        executables = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"]
+        if self._registry_manager:
+            self._registry_manager.set_system_proxy_lockdown(False)
+            # Remove browser-level URL blacklisting (Allow browsing)
+            self._registry_manager.apply_url_blocklist([])
+            
+        # 2. Apply Surgical "Action" Blocks
+        if self._registry_manager:
+            # This is the 'Master Key' to disabling the 'Open/Attach' window
+            # We enforce it at the OS level
+            self._registry_manager.set_browser_upload_policy(not self.block_all)
         
-        for d in search_dirs:
-            if not os.path.exists(d): continue
-            for exe in executables:
-                # Recursive search for the exe
-                for root, _, files in os.walk(d):
-                    if exe in files:
-                        paths.append(os.path.join(root, exe))
-        return list(set(paths))
+        # 3. Flush DNS to clear any leftover blocks
+        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+
+    def _monitor_loop(self):
+        """Monitor for high-volume outbound traffic (Upload detection)."""
+        self.logger.info("Outbound Traffic Guard active (Volume Inspection)")
+        
+        while self._running:
+            try:
+                if not self.block_all:
+                    time.sleep(2)
+                    continue
+
+                # Scan all processes
+                for proc in psutil.process_iter(['pid', 'name', 'io_counters']):
+                    try:
+                        name = proc.info['name'].lower()
+                        if not any(b in name for b in ["chrome", "msedge", "firefox", "brave"]):
+                            continue
+                            
+                        pid = proc.info['pid']
+                        io = proc.info['io_counters']
+                        if not io: continue
+                        
+                        now = time.time()
+                        bytes_sent = io.write_bytes # Outbound traffic
+                        
+                        # Keep history for this PID
+                        history = self._traffic_history[pid]
+                        history.append((now, bytes_sent))
+                        
+                        # Only keep last 5 seconds
+                        while len(history) > 0 and now - history[0][0] > 5:
+                            history.pop(0)
+                            
+                        if len(history) < 2: continue
+                        
+                        # Calculate speed (bytes per second)
+                        total_bytes = history[-1][1] - history[0][1]
+                        duration = history[-1][0] - history[0][0]
+                        if duration <= 0: continue
+                        
+                        bps = total_bytes / duration
+                        mbps = (bps * 8) / (1024 * 1024)
+                        
+                        # THRESHOLD: If a browser is pushing more than 1Mbps outbound
+                        # This is typical of an upload, but NOT typical for browsing/searching
+                        if mbps > 1.0:
+                            self.logger.warning(f"CRITICAL: Detected high-volume upload attempt from {name} ({mbps:.2f} Mbps)")
+                            self.logger.warning(f"ACTION: Terminating process to prevent data exfiltration.")
+                            
+                            # KILL the process immediately to stop the upload
+                            subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], capture_output=True)
+                            
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                        
+            except Exception as e:
+                self.logger.error(f"DLP Guard monitor error: {e}")
+            
+            time.sleep(1) # Check every second for speed
 
     def start(self):
         if self._running:
             return
             
-        # Initial policy enforcement
+        self._running = True
+        
+        # Apply policies
         self._enforce_lockdown()
 
-        if not self.block_all:
-            return
-            
+        # Start the Traffic Monitor thread
         import threading
-        self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-        self.logger.info("DLP Guard started (Upload Blocking Active)")
-
-    def _enforce_lockdown(self):
-        """Apply all configured lockdown measures."""
-        self.logger.info(f"Enforcing DLP State: BlockAll={self.block_all}")
-        
-        # 1. Kill blacklisted processes
-        if self.block_all:
-            for proc in self.PROCESS_BLACKLIST:
-                subprocess.run(["taskkill", "/F", "/IM", proc, "/T"], capture_output=True)
-        
-        # 2. Clean up previous firewall/proxy blocks
-        if self._firewall_manager:
-            self._firewall_manager.clear_browser_locks()
-        
-        if self._registry_manager:
-            self._registry_manager.set_system_proxy_lockdown(False)
-            
-        # 3. If Block is OFF, we are done
-        if not self.block_all:
-            if self._registry_manager:
-                self._registry_manager.set_browser_upload_policy(True)
-                self._registry_manager.apply_url_blocklist([])
-            subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
-            return
-
-        # 4. If Block is ON, apply surgical restrictions
-        self.logger.warning("Enforcing Surgical Upload Lockdown...")
-        
-        # Kill browsers to force policy reload
-        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
-        
-        if self._registry_manager:
-            # surgical Browser Policy (Kills dialogs and drag-drop)
-            self._registry_manager.set_browser_upload_policy(False)
-            
-            # URL Blocklist (Messaging + File Sharing)
-            active_blacklist = [d for d in self.UPLOAD_SITE_BLACKLIST if d not in self.whitelist]
-            self._registry_manager.apply_url_blocklist(active_blacklist)
-            
-        # Flush DNS
-        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+        self.logger.info("Surgical DLP Guard started")
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
