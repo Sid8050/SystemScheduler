@@ -69,56 +69,74 @@ class DataLossGuard:
         # signal from the dashboard for a 'general bypass' window.
         return False
         
-    def _enforce_lockdown(self):
+    def _enforce_lockdown(self, force_kill: bool = True):
         """Apply surgical action-based lockdown measures."""
         self.logger.info(f"DLP STATE REFRESH: BlockAll={self.block_all}, Approvals={len(self._approved_hashes)}")
         
-        # 1. KILL Browsers using psutil (more reliable than taskkill command)
-        # We do this to ensure they drop old registry cache and proxy settings
-        self.logger.warning("Terminating browser processes to refresh security context...")
-        browser_exes = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"]
-        for proc in psutil.process_iter(['name']):
-            try:
-                if proc.info['name'].lower() in browser_exes:
-                    proc.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        # 1. Kill Browsers ONLY if transitioning state or requested
+        if force_kill:
+            self.logger.warning("Refreshing browser security state...")
+            browser_exes = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"]
+            for proc in psutil.process_iter(['name']):
+                try:
+                    if proc.info['name'].lower() in browser_exes:
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
 
         # 2. FORCE CLEANUP of all previous aggressive blocks
-        # This ensures no 'Internet Blackout' remains from older versions
         if self._firewall_manager:
-            # Wipe all firewall rules we ever created
             self._firewall_manager.clear_browser_locks()
             self._firewall_manager.unblock_domain("Global_Block_80")
             self._firewall_manager.unblock_domain("Global_Block_443")
         
         if self._registry_manager:
-            # Wipe all Proxy settings
             self._registry_manager.set_system_proxy_lockdown(False)
-            # Wipe all URL blocklists
             self._registry_manager.apply_url_blocklist([])
             
         # 3. Apply the SURGICAL 'Open File' window block
         if self._registry_manager:
-            # Unlock if (Blocking is OFF) OR (We have an Approved File)
             should_allow_picker = (not self.block_all) or (len(self._approved_hashes) > 0)
             self._registry_manager.set_browser_upload_policy(should_allow_picker)
-            
-            if self.block_all:
-                status = "ENABLED (Temporary Approval)" if should_allow_picker else "DISABLED"
-                self.logger.info(f"DLP Protection: Windows File Picker is {status}")
         
         # 4. Flush DNS and refresh system settings
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
-        # Force Windows to see the registry changes immediately
-        subprocess.run(["nbtstat", "-R"], capture_output=True)
-        self.logger.info("DLP security refresh complete. Browsers can be reopened now.")
+        self.logger.info("DLP security refresh complete.")
 
-    def _monitor_loop(self):
-        """Passive monitor only. No longer kills processes based on traffic volume."""
-        self.logger.info("Outbound Traffic Guard active (Passive Monitoring Only)")
+    def _window_monitor_loop(self):
+        """
+        Active window monitoring to close file picker dialogs.
+        This provides immediate surgical blocking of the 'Upload' action.
+        """
+        import win32gui
+        import win32con
+        
         while self._running:
-            time.sleep(10)
+            try:
+                # Only monitor if blocking is ON and no files are approved
+                if self.block_all and len(self._approved_hashes) == 0:
+                    # Windows common file dialog titles
+                    target_titles = ["Open", "Select File", "Select files", "Upload files", "Choose File", "Open File"]
+                    
+                    def enum_windows_callback(hwnd, _):
+                        if not win32gui.IsWindowVisible(hwnd):
+                            return
+                        
+                        title = win32gui.GetWindowText(hwnd)
+                        class_name = win32gui.GetClassName(hwnd)
+                        
+                        # Check for standard Windows File Dialog class or common titles
+                        # #32770 is the standard dialog class ID
+                        if class_name == "#32770" or any(t in title for t in target_titles):
+                            # Verify it belongs to a browser process
+                            # (Optional, but safer to block all during lockdown)
+                            self.logger.warning(f"Surgical Block: Closing unauthorized file picker: {title}")
+                            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                            
+                    win32gui.EnumWindows(enum_windows_callback, None)
+            except Exception:
+                pass
+            time.sleep(0.5) # High-frequency check for surgical response
 
     def start(self):
         """Start the DLP monitoring thread."""
@@ -126,27 +144,35 @@ class DataLossGuard:
             return
             
         self._running = True
-        
-        # Apply policies
-        self._enforce_lockdown()
+        self._enforce_lockdown(force_kill=False)
 
-        # Start the Traffic Monitor thread
         import threading
+        # 1. Passive Monitor (Logging only now)
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
+        
+        # 2. Window Monitor (Active surgical blocking)
+        if sys.platform == 'win32':
+            self._win_thread = threading.Thread(target=self._window_monitor_loop, daemon=True)
+            self._win_thread.start()
+            
         self.logger.info("Surgical DLP Guard started")
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
         old_block = self.block_all
-        
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        # Always re-enforce to ensure surgical precision and clear old blocks
-        self._enforce_lockdown()
+        # Only kill browsers if the block state actually changed
+        if old_block != self.block_all:
+            self._enforce_lockdown(force_kill=True)
+        else:
+            # Periodic refresh without killing browsers
+            self._enforce_lockdown(force_kill=False)
             
         self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
+
 
     def update_approvals(self, dashboard_url: str, api_key: str):
         """Manually trigger an approval sync."""
