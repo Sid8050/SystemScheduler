@@ -539,18 +539,24 @@ def main():
     if args.command:
         from agent.core.service import (
             install_service, uninstall_service, start_service, 
-            stop_service, get_service_status
+            stop_service, get_service_status, EndpointSecurityService
         )
+        import win32serviceutil
         
-        if args.command == "install":
-            install_service()
-        elif args.command == "uninstall":
-            uninstall_service()
-        elif args.command == "start":
-            start_service()
-        elif args.command == "stop":
-            stop_service()
-        elif args.command == "status":
+        if args.command in ["install", "remove", "uninstall", "start", "stop", "restart"]:
+            # Use the standard pywin32 handler for these commands
+            # This ensures the service is registered with the correct Python path
+            cmd = "remove" if args.command == "uninstall" else args.command
+            sys.argv = [sys.argv[0], cmd]
+            win32serviceutil.HandleCommandLine(EndpointSecurityService)
+            
+            # Post-install: Enable self-protection / recovery
+            if args.command == "install":
+                from agent.core.service import set_service_recovery
+                set_service_recovery()
+            return
+            
+        if args.command == "status":
             print(f"Service status: {get_service_status()}")
         return
 
