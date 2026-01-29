@@ -296,49 +296,46 @@ class EndpointSecurityAgent:
     def _apply_new_config(self, config_data: dict):
         """Apply new configuration received from dashboard."""
         try:
-            self.logger.info(f"Applying new configuration: {list(config_data.keys())}")
+            self.logger.info(f"SYNC: Received update from Dashboard. Keys: {list(config_data.keys())}")
             
-            # Update network blocking
+            # 1. Update Network Guard (Blocked Sites)
             if 'network' in config_data and self.network_guard:
                 network_cfg = config_data['network']
                 blocked_sites = network_cfg.get('blocked_sites', [])
-                self.logger.info(f"Syncing {len(blocked_sites)} blocked sites")
                 
-                # Update blocked sites in guard
+                # Check for actual changes to avoid redundant work
                 current_blocked = set(self.network_guard.get_blocked_domains())
                 new_blocked = set(s.lower() for s in blocked_sites)
                 
-                # Add new ones
-                for site in new_blocked - current_blocked:
-                    self.network_guard.add_blocked_site(site)
-                    self.logger.info(f"Added blocked site: {site}")
-                    
-                # Remove deleted ones
-                for site in current_blocked - new_blocked:
-                    self.network_guard.remove_blocked_site(site)
-                    self.logger.info(f"Removed blocked site: {site}")
+                if current_blocked != new_blocked:
+                    self.logger.info(f"SYNC: Updating {len(new_blocked)} blocked domains")
+                    # Add new ones
+                    for site in new_blocked - current_blocked:
+                        self.network_guard.add_blocked_site(site)
+                    # Remove deleted ones
+                    for site in current_blocked - new_blocked:
+                        self.network_guard.remove_blocked_site(site)
 
-            # Update USB whitelist
+            # 2. Update USB Whitelist
             if 'usb' in config_data and self.usb_controller:
                 usb_cfg = config_data['usb']
                 whitelist = usb_cfg.get('whitelist', [])
                 self.usb_controller.whitelist = whitelist
-                
                 if 'mode' in usb_cfg:
                     self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
 
-            # Update DLP (Upload) blocking
-            dlp_cfg = config_data.get('uploads') or config_data.get('uploads_rules')
-            
+            # 3. Update DLP (Upload Blocking)
+            dlp_cfg = config_data.get('uploads')
             if dlp_guard := getattr(self, 'dlp_guard', None):
                 block_all = dlp_cfg.get('block_all', False) if dlp_cfg else False
                 whitelist = dlp_cfg.get('whitelist', []) if dlp_cfg else []
                 
-                self.logger.info(f"Syncing DLP Policy: BlockAll={block_all}")
+                # Always trigger sync to dlp_guard, it handles its own internal checks
                 dlp_guard.set_config(block_all, whitelist)
                 
                 # Sync approved file hashes
                 dlp_guard.update_approvals(self.config.agent.dashboard_url, self.config.agent.api_key)
+
                     
         except Exception as e:
             self.logger.error(f"Error applying new config: {e}")

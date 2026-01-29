@@ -5,7 +5,7 @@ agent:
   name: "EndpointSecurityAgent"
   version: "1.0.0"
   machine_id: null  # Auto-generated if null
-  heartbeat_interval: 60  # seconds
+  heartbeat_interval: 10  # seconds
   dashboard_url: "http://localhost:8000"
   api_key: null  # Set after registering with dashboard
 

@@ -15,11 +15,10 @@ from agent.utils.registry import get_registry_manager
 from agent.utils.firewall import FirewallManager
 
 class DataLossGuard:
-    # High-risk upload/file sharing and messaging sites (Removed from total block)
-    # We now only use these for traffic monitoring priority
-    SENSITIVE_DOMAINS = [
+    # High-risk upload/file sharing and messaging sites
+    UPLOAD_SITE_BLACKLIST = [
         "wetransfer.com", "mega.nz", "dropbox.com", "drive.google.com", 
-        "web.whatsapp.com", "web.telegram.org", "slack.com"
+        "mediafire.com", "web.whatsapp.com", "web.telegram.org"
     ]
 
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
@@ -71,41 +70,50 @@ class DataLossGuard:
         return False
         
     def _enforce_lockdown(self):
-        """Surgically enforce DLP by only blocking the file selection action."""
-        self.logger.info(f"Applying Surgical DLP Policy: BlockAll={self.block_all}")
+        """Apply surgical action-based lockdown measures."""
+        self.logger.info(f"DLP STATE REFRESH: BlockAll={self.block_all}, Approvals={len(self._approved_hashes)}")
         
-        # 1. KILL browsers to apply policies and clear internet-killing blocks
-        # We kill browsers on EVERY state change to ensure the user is not 'stuck' 
-        # with old proxy/firewall settings from previous versions.
-        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
+        # 1. KILL Browsers using psutil (more reliable than taskkill command)
+        # We do this to ensure they drop old registry cache and proxy settings
+        self.logger.warning("Terminating browser processes to refresh security context...")
+        browser_exes = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"]
+        for proc in psutil.process_iter(['name']):
+            try:
+                if proc.info['name'].lower() in browser_exes:
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
 
-        # 2. Forcefully CLEAR all internet-killing blocks (Firewall/Proxy/URL Blacklists)
+        # 2. FORCE CLEANUP of all previous aggressive blocks
+        # This ensures no 'Internet Blackout' remains from older versions
         if self._firewall_manager:
+            # Wipe all firewall rules we ever created
             self._firewall_manager.clear_browser_locks()
             self._firewall_manager.unblock_domain("Global_Block_80")
             self._firewall_manager.unblock_domain("Global_Block_443")
         
         if self._registry_manager:
-            # Thorough cleanup of Proxy settings
+            # Wipe all Proxy settings
             self._registry_manager.set_system_proxy_lockdown(False)
-            # Thorough cleanup of URL blocklist (messaging apps/sharing sites)
+            # Wipe all URL blocklists
             self._registry_manager.apply_url_blocklist([])
             
-        # 3. Apply ONLY the surgical dialog block if enabled
+        # 3. Apply the SURGICAL 'Open File' window block
         if self._registry_manager:
-            should_allow_dialogs = (not self.block_all) or (len(self._approved_hashes) > 0)
-            self._registry_manager.set_browser_upload_policy(should_allow_dialogs)
+            # Unlock if (Blocking is OFF) OR (We have an Approved File)
+            should_allow_picker = (not self.block_all) or (len(self._approved_hashes) > 0)
+            self._registry_manager.set_browser_upload_policy(should_allow_picker)
             
-            if self.block_all and not should_allow_dialogs:
-                self.logger.warning("Upload Lockdown: Windows File Picker has been DISABLED.")
-            elif self.block_all and should_allow_dialogs:
-                self.logger.info("Upload Lockdown: File Picker ENABLED due to active approval.")
+            if self.block_all:
+                status = "ENABLED (Temporary Approval)" if should_allow_picker else "DISABLED"
+                self.logger.info(f"DLP Protection: Windows File Picker is {status}")
         
-        # 4. Flush DNS and Shell notifications
+        # 4. Flush DNS and refresh system settings
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+        # Force Windows to see the registry changes immediately
+        subprocess.run(["nbtstat", "-R"], capture_output=True)
+        self.logger.info("DLP security refresh complete. Browsers can be reopened now.")
+
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
