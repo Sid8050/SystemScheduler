@@ -4,6 +4,7 @@ import hashlib
 import os
 import httpx
 import sys
+import subprocess
 from pathlib import Path
 
 class UploadRequestApp:
@@ -12,6 +13,7 @@ class UploadRequestApp:
         self.api_key = api_key
         
         self.root = tk.Tk()
+        self.dest_var = tk.StringVar()
         self.root.title("Endpoint Security - Request Upload")
         self.root.geometry("500x450")
         self.root.configure(bg="#09090b") # zinc-950
