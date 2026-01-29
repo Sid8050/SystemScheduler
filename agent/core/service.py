@@ -106,6 +106,10 @@ class EndpointSecurityService(win32serviceutil.ServiceFramework):
     
     def SvcDoRun(self):
         """Main service entry point."""
+        project_root = str(Path(__file__).parent.parent.parent)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+            
         servicemanager.LogMsg(
             servicemanager.EVENTLOG_INFORMATION_TYPE,
             servicemanager.PYS_SERVICE_STARTED,
@@ -118,7 +122,10 @@ class EndpointSecurityService(win32serviceutil.ServiceFramework):
     def main(self):
         """Main service loop."""
         try:
-            # Import agent here to avoid import issues
+            project_root = str(Path(__file__).parent.parent.parent)
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+
             from agent.main import EndpointSecurityAgent
             
             # Create and start agent
