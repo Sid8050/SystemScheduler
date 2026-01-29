@@ -387,19 +387,19 @@ class RegistryManager:
         success = True
         value = 1 if allowed else 0
         
-        hives = [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]
         paths = [self.CHROME_POLICY_PATH, self.EDGE_POLICY_PATH]
-        
-        for hive in hives:
+        for hive in [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]:
             for path in paths:
                 self.create_key(hive, path)
-                if not self.write_value(hive, path, "FileSelectionDialogsEnabled", value, RegistryValueType.REG_DWORD):
-                    success = False
-                
-                if not self.write_value(hive, path, "ExternalProtocolDialogShowAlwaysAllowedHosts", [] if not allowed else None, RegistryValueType.REG_MULTI_SZ):
-                    pass
-
+                self.write_value(hive, path, "FileSelectionDialogsEnabled", value, RegistryValueType.REG_DWORD)
+        
+        shell_path = r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32"
+        for hive in [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]:
+            self.create_key(hive, shell_path)
+            self.write_value(hive, shell_path, "NoFileOpen", 0 if allowed else 1, RegistryValueType.REG_DWORD)
+            
         return success
+
 
     def apply_url_blocklist(self, domains: List[str]) -> bool:
         if sys.platform != 'win32': return False

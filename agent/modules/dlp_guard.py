@@ -109,16 +109,29 @@ class DataLossGuard:
 
     def set_config(self, block_all: bool, whitelist: List[str]):
         """Update guard configuration."""
-        # Only trigger re-enforcement if state actually changed
-        changed = (self.block_all != block_all) or (self.whitelist != set(s.lower() for s in whitelist))
-        
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
         
-        if changed:
-            self._enforce_lockdown()
+        # Kill browsers to force policy reload
+        if block_all:
+            self.logger.warning("Enforcing Surgical Lockdown: Disabling file selection capabilities...")
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
+        
+        if self._registry_manager:
+            # surgical Browser Policy (Kills the 'Open File' window)
+            self._registry_manager.set_browser_upload_policy(not block_all)
             
-        self.logger.info(f"DLP Guard synchronized with Dashboard. Lockdown: {'ACTIVE' if block_all else 'OFF'}")
+            # Ensure Internet is NOT blocked (Remove Proxy Lockdown)
+            self._registry_manager.set_system_proxy_lockdown(False)
+            
+        # Remove Firewall Locks (Restore Internet access)
+        if self._firewall_manager:
+            self._firewall_manager.clear_browser_locks()
+            
+        self.logger.info(f"DLP Guard synchronized: Surgical Upload Block is {'ON' if block_all else 'OFF'}")
+
 
 
     def stop(self):
