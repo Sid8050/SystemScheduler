@@ -328,23 +328,14 @@ class EndpointSecurityAgent:
                     self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
 
             # Update DLP (Upload) blocking
-            # We look for both 'uploads' and 'uploads_rules' to be safe
             dlp_cfg = config_data.get('uploads') or config_data.get('uploads_rules')
             
-            if dlp_cfg and self.dlp_guard:
-                block_all = dlp_cfg.get('block_all', False)
-                whitelist = dlp_cfg.get('whitelist', [])
+            if dlp_guard := getattr(self, 'dlp_guard', None):
+                block_all = dlp_cfg.get('block_all', False) if dlp_cfg else False
+                whitelist = dlp_cfg.get('whitelist', []) if dlp_cfg else []
                 
-                self.logger.info(f"DLP Sync: block_all={block_all}, whitelist={len(whitelist)}")
-                
-                # Always call set_config which now handles its own change detection and browser killing
-                self.dlp_guard.set_config(block_all, whitelist)
-                
-                # Ensure it's running if block_all is True
-                if block_all and not self.dlp_guard._running:
-                    self.dlp_guard.start()
-                elif not block_all and self.dlp_guard._running:
-                    self.dlp_guard.stop()
+                self.logger.info(f"Syncing DLP Policy: BlockAll={block_all}")
+                dlp_guard.set_config(block_all, whitelist)
                     
         except Exception as e:
             self.logger.error(f"Error applying new config: {e}")

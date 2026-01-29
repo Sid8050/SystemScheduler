@@ -72,65 +72,61 @@ class DataLossGuard:
 
     def _enforce_lockdown(self):
         """Apply all configured lockdown measures."""
-        if self.block_all:
-            self.logger.warning("Enforcing Iron-Clad Lockdown...")
-            # Kill browsers
-            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
-            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
-            subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
-            subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
+        self.logger.info(f"Enforcing DLP State: BlockAll={self.block_all}")
+        
+        # 1. Clean up ALL previous firewall/proxy blocks first to ensure internet works
+        if self._firewall_manager:
+            self._firewall_manager.clear_browser_locks()
         
         if self._registry_manager:
-            # Registry policies
-            self._registry_manager.set_system_proxy_lockdown(self.block_all, list(self.whitelist))
-            self._registry_manager.set_browser_upload_policy(not self.block_all)
+            self._registry_manager.set_system_proxy_lockdown(False)
             
-        if self._firewall_manager:
-            # Clear previous locks
-            self._firewall_manager.clear_browser_locks()
-            
-            if self.block_all:
-                # 1. Block ALL Web traffic (Port 80/443) system-wide
-                self._firewall_manager.block_all_web_traffic()
-                
-                # 2. Allow only Whitelisted domains
-                for domain in self.whitelist:
-                    ips = self._firewall_manager.resolve_domain(domain)
-                    if ips:
-                        self._firewall_manager.allow_ip_outbound(domain, ips)
-                
-                # 3. Always allow Dashboard/Localhost
-                self._firewall_manager.allow_ip_outbound("Dashboard", ["127.0.0.1"])
-                
-        # Flush DNS to ensure immediate effect
-        if self.block_all:
+        # 2. If Block is OFF, we are done
+        if not self.block_all:
+            if self._registry_manager:
+                self._registry_manager.set_browser_upload_policy(True)
+                self._registry_manager.apply_url_blocklist([])
             subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+            return
 
-
-    def set_config(self, block_all: bool, whitelist: List[str]):
-        """Update guard configuration."""
-        self.block_all = block_all
-        self.whitelist = set(s.lower() for s in (whitelist or []))
+        # 3. If Block is ON, apply surgical restrictions
+        self.logger.warning("Enforcing Surgical Upload Lockdown...")
         
         # Kill browsers to force policy reload
-        if block_all:
-            self.logger.warning("Enforcing Surgical Lockdown: Disabling file selection capabilities...")
-            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
-            subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
-            subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "firefox.exe", "/T"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
         
         if self._registry_manager:
             # surgical Browser Policy (Kills the 'Open File' window)
-            self._registry_manager.set_browser_upload_policy(not block_all)
+            self._registry_manager.set_browser_upload_policy(False)
             
-            # Ensure Internet is NOT blocked (Remove Proxy Lockdown)
-            self._registry_manager.set_system_proxy_lockdown(False)
+            # Browser Level URL Blocklist (Block common file sharing sites)
+            # This is the most reliable way to block specific upload sites
+            active_blacklist = [d for d in self.UPLOAD_SITE_BLACKLIST if d not in self.whitelist]
+            self._registry_manager.apply_url_blocklist(active_blacklist)
             
-        # Remove Firewall Locks (Restore Internet access)
-        if self._firewall_manager:
-            self._firewall_manager.clear_browser_locks()
+        # Flush DNS
+        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+
+    def set_config(self, block_all: bool, whitelist: List[str]):
+        """Update guard configuration."""
+        # Detect if we are changing state or whitelist
+        old_block = self.block_all
+        old_whitelist = self.whitelist
+        
+        self.block_all = block_all
+        self.whitelist = set(s.lower() for s in (whitelist or []))
+        
+        # If toggled ON, or whitelist changed while ON, re-enforce
+        if (block_all and not old_block) or (block_all and self.whitelist != old_whitelist):
+            self._enforce_lockdown()
+        # If toggled OFF, clear everything
+        elif not block_all and old_block:
+            self._enforce_lockdown() # This now handles cleanup
             
-        self.logger.info(f"DLP Guard synchronized: Surgical Upload Block is {'ON' if block_all else 'OFF'}")
+        self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
 
 
 

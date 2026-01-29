@@ -133,7 +133,10 @@ class FirewallManager:
         return self._run_command(cmd)
 
     def clear_browser_locks(self) -> bool:
-        ps_cmd = f'Get-NetFirewallRule -DisplayName "{self.RULE_PREFIX}*" | Remove-NetFirewallRule'
+        ps_cmd = (
+            f'$rules = Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -like "{self.RULE_PREFIX}*" -or $_.DisplayName -like "{self.RULE_PREFIX}*" }}; '
+            'if ($rules) { $rules | Remove-NetFirewallRule }'
+        )
         try:
             subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True)
             return True

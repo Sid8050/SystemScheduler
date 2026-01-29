@@ -385,18 +385,28 @@ class RegistryManager:
 
     def set_browser_upload_policy(self, allowed: bool) -> bool:
         success = True
-        value = 1 if allowed else 0
         
         paths = [self.CHROME_POLICY_PATH, self.EDGE_POLICY_PATH]
         for hive in [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]:
             for path in paths:
                 self.create_key(hive, path)
-                self.write_value(hive, path, "FileSelectionDialogsEnabled", value, RegistryValueType.REG_DWORD)
+                self.write_value(hive, path, "FileSelectionDialogsEnabled", 1 if allowed else 0, RegistryValueType.REG_DWORD)
         
-        shell_path = r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32"
+        shell_paths = [
+            r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32",
+            r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+        ]
         for hive in [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]:
-            self.create_key(hive, shell_path)
-            self.write_value(hive, shell_path, "NoFileOpen", 0 if allowed else 1, RegistryValueType.REG_DWORD)
+            for path in shell_paths:
+                self.create_key(hive, path)
+                self.write_value(hive, path, "NoFileOpen", 0 if allowed else 1, RegistryValueType.REG_DWORD)
+                self.write_value(hive, path, "NoFileSaveAs", 0 if allowed else 1, RegistryValueType.REG_DWORD)
+        
+        try:
+            import ctypes
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        except Exception:
+            pass
             
         return success
 
