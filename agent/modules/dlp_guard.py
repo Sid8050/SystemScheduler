@@ -71,11 +71,11 @@ class DataLossGuard:
         return False
         
     def _enforce_lockdown(self):
-        """Apply surgical action-based lockdown measures."""
-        self.logger.info(f"Enforcing Surgical DLP: BlockAll={self.block_all}")
+        """Surgically enforce DLP without killing internet or processes."""
+        self.logger.info(f"Applying Surgical DLP Policy: BlockAll={self.block_all}")
         
-        # 1. Clean up ALL internet-killing blocks (Firewall/Proxy)
-        # We want the user to browse freely
+        # 1. ALWAYS clear internet-killing blocks (Firewall/Proxy)
+        # We want browsers to ALWAYS open and browse.
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
             self._firewall_manager.unblock_domain("Global_Block_80")
@@ -83,76 +83,22 @@ class DataLossGuard:
         
         if self._registry_manager:
             self._registry_manager.set_system_proxy_lockdown(False)
-            # Remove browser-level URL blacklisting (Allow browsing)
             self._registry_manager.apply_url_blocklist([])
             
-        # 2. Apply Surgical "Action" Blocks
+        # 2. Apply ONLY the surgical dialog block
         if self._registry_manager:
-            # This is the 'Master Key' to disabling the 'Open/Attach' window
-            # We enforce it at the OS level
+            # This only stops the 'Open File' window, does not kill the browser
             self._registry_manager.set_browser_upload_policy(not self.block_all)
         
-        # 3. Flush DNS to clear any leftover blocks
+        # 3. Clear DNS
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
 
     def _monitor_loop(self):
-        """Monitor for high-volume outbound traffic (Upload detection)."""
-        self.logger.info("Outbound Traffic Guard active (Volume Inspection)")
-        
+        """Passive monitor only. No longer kills processes based on traffic volume."""
+        self.logger.info("Outbound Traffic Guard active (Passive Monitoring Only)")
         while self._running:
-            try:
-                if not self.block_all:
-                    time.sleep(2)
-                    continue
+            time.sleep(10)
 
-                # Scan all processes
-                for proc in psutil.process_iter(['pid', 'name', 'io_counters']):
-                    try:
-                        name = proc.info['name'].lower()
-                        if not any(b in name for b in ["chrome", "msedge", "firefox", "brave"]):
-                            continue
-                            
-                        pid = proc.info['pid']
-                        io = proc.info['io_counters']
-                        if not io: continue
-                        
-                        now = time.time()
-                        bytes_sent = io.write_bytes # Outbound traffic
-                        
-                        # Keep history for this PID
-                        history = self._traffic_history[pid]
-                        history.append((now, bytes_sent))
-                        
-                        # Only keep last 5 seconds
-                        while len(history) > 0 and now - history[0][0] > 5:
-                            history.pop(0)
-                            
-                        if len(history) < 2: continue
-                        
-                        # Calculate speed (bytes per second)
-                        total_bytes = history[-1][1] - history[0][1]
-                        duration = history[-1][0] - history[0][0]
-                        if duration <= 0: continue
-                        
-                        bps = total_bytes / duration
-                        mbps = (bps * 8) / (1024 * 1024)
-                        
-                        # THRESHOLD: If a browser is pushing more than 1Mbps outbound
-                        # This is typical of an upload, but NOT typical for browsing/searching
-                        if mbps > 1.0:
-                            self.logger.warning(f"CRITICAL: Detected high-volume upload attempt from {name} ({mbps:.2f} Mbps)")
-                            self.logger.warning(f"ACTION: Terminating process to prevent data exfiltration.")
-                            
-                            # KILL the process immediately to stop the upload
-                            subprocess.run(["taskkill", "/F", "/PID", str(pid), "/T"], capture_output=True)
-                            
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-                        
-            except Exception as e:
-                self.logger.error(f"DLP Guard monitor error: {e}")
-            
-            time.sleep(1) # Check every second for speed
 
     def start(self):
         if self._running:
