@@ -196,7 +196,6 @@ class USBController:
         return 'unknown'
     
     def _get_connected_usb_devices(self) -> List[USBDevice]:
-        """Get list of currently connected USB devices."""
         devices = []
         
         if wmi is None:
@@ -206,47 +205,45 @@ class USBController:
             pythoncom.CoInitialize()
             c = wmi.WMI()
             
-            # Get USB devices
-            for device in c.Win32_USBHub():
-                device_id = device.DeviceID or ''
-                
-                if not device_id:
+            for pnp in c.Win32_PnPEntity():
+                pnp_id = pnp.PNPDeviceID or ''
+                if not pnp_id.startswith('USB'):
                     continue
                 
-                parsed = self._parse_device_id(device_id)
+                service = (pnp.Service or '').lower()
+                compatible_ids = pnp.CompatibleID or []
                 
-                devices.append(USBDevice(
-                    device_id=device_id,
-                    vendor_id=parsed['vid'],
-                    product_id=parsed['pid'],
-                    serial_number=parsed['serial'] or None,
-                    description=device.Description or 'Unknown USB Device',
-                    drive_letter=None,
-                    device_type='hub',
-                    connected_time=datetime.now()
-                ))
-            
-            # Get disk drives (USB storage)
-            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
-                device_id = disk.PNPDeviceID or ''
+                device_type = 'unknown'
+                if service == 'usbstor' or 'USBSTOR' in pnp_id:
+                    device_type = 'mass_storage'
+                elif service == 'hidusb' or 'HID_DEVICE' in pnp_id:
+                    device_type = 'hid'
+                elif service == 'usbhub':
+                    device_type = 'hub'
+                elif 'mtp' in str(compatible_ids).lower():
+                    device_type = 'mtp'
+                elif 'ptp' in str(compatible_ids).lower():
+                    device_type = 'ptp'
                 
-                parsed = self._parse_device_id(device_id)
+                parsed = self._parse_device_id(pnp_id)
                 
-                # Find associated drive letter
                 drive_letter = None
-                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
-                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
-                        drive_letter = logical.DeviceID
-                        break
+                if device_type == 'mass_storage':
+                    for disk in c.Win32_DiskDrive(InterfaceType='USB'):
+                        if disk.PNPDeviceID == pnp_id:
+                            for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
+                                for logical in partition.associators("Win32_LogicalDiskToPartition"):
+                                    drive_letter = logical.DeviceID
+                                    break
                 
                 devices.append(USBDevice(
-                    device_id=device_id,
+                    device_id=pnp_id,
                     vendor_id=parsed['vid'],
                     product_id=parsed['pid'],
                     serial_number=parsed['serial'] or None,
-                    description=disk.Caption or disk.Model or 'USB Storage Device',
+                    description=pnp.Caption or pnp.Description or 'Unknown USB Device',
                     drive_letter=drive_letter,
-                    device_type='mass_storage',
+                    device_type=device_type,
                     connected_time=datetime.now()
                 ))
             
