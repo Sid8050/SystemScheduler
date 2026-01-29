@@ -16,6 +16,7 @@ import time
 import httpx
 import json
 import socket
+import subprocess
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -375,10 +376,36 @@ class EndpointSecurityAgent:
             self.logger.error(f"Registration error: {e}")
             return False
 
+    def _start_guardian(self):
+        """Spawn the guardian process to ensure self-protection."""
+        if sys.platform != 'win32':
+            return
+            
+        try:
+            # Check if guardian is already running
+            import psutil
+            for proc in psutil.process_iter(['name', 'cmdline']):
+                if proc.info['name'] == 'python.exe' and 'guardian.py' in str(proc.info['cmdline']):
+                    return
+
+            # Start guardian
+            guardian_path = Path(__file__).parent / "core" / "guardian.py"
+            subprocess.Popen(
+                [sys.executable, str(guardian_path)],
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            )
+            self.logger.info("Self-protection guardian started")
+        except Exception as e:
+            self.logger.error(f"Failed to start guardian: {e}")
+
+
     def start(self):
         """Start the agent and all modules."""
         if self._running:
             return
+            
+        # Start self-protection
+        self._start_guardian()
         
         # Register first
         if not self._register_agent():
