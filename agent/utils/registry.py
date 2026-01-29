@@ -394,13 +394,15 @@ class RegistryManager:
         
         shell_paths = [
             r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32",
-            r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+            r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer",
+            r"Software\Policies\Microsoft\Windows\Sidebar"
         ]
         for hive in [RegistryHive.HKEY_LOCAL_MACHINE, RegistryHive.HKEY_CURRENT_USER]:
             for path in shell_paths:
                 self.create_key(hive, path)
                 self.write_value(hive, path, "NoFileOpen", 0 if allowed else 1, RegistryValueType.REG_DWORD)
                 self.write_value(hive, path, "NoFileSaveAs", 0 if allowed else 1, RegistryValueType.REG_DWORD)
+                self.write_value(hive, path, "NoDragDrop", 0 if allowed else 1, RegistryValueType.REG_DWORD)
         
         try:
             import ctypes

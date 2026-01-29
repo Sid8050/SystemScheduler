@@ -11,13 +11,21 @@ from agent.utils.registry import get_registry_manager
 from agent.utils.firewall import FirewallManager
 
 class DataLossGuard:
-    # High-risk upload/file sharing sites to block when DLP is enabled
+    # High-risk upload/file sharing and messaging sites
     UPLOAD_SITE_BLACKLIST = [
         "wetransfer.com", "mega.nz", "dropbox.com", "drive.google.com", 
         "mediafire.com", "4shared.com", "zippyshare.com", "rapidgator.net",
         "sendspace.com", "transfer.pcloud.com", "file.io", "gofile.io",
         "transfer.sh", "wormhole.app", "smash.com", "docsend.com",
-        "scribd.com", "issuu.com", "box.com", "icloud.com", "onedrive.live.com"
+        "scribd.com", "issuu.com", "box.com", "icloud.com", "onedrive.live.com",
+        "web.whatsapp.com", "web.telegram.org", "discord.com", "slack.com",
+        "messenger.com", "facebook.com/messages"
+    ]
+    
+    # Desktop apps that allow file transfer
+    PROCESS_BLACKLIST = [
+        "WhatsApp.exe", "Telegram.exe", "OneDrive.exe", "Dropbox.exe",
+        "Box.exe", "Slack.exe", "Discord.exe"
     ]
 
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
@@ -74,14 +82,19 @@ class DataLossGuard:
         """Apply all configured lockdown measures."""
         self.logger.info(f"Enforcing DLP State: BlockAll={self.block_all}")
         
-        # 1. Clean up ALL previous firewall/proxy blocks first to ensure internet works
+        # 1. Kill blacklisted processes
+        if self.block_all:
+            for proc in self.PROCESS_BLACKLIST:
+                subprocess.run(["taskkill", "/F", "/IM", proc, "/T"], capture_output=True)
+        
+        # 2. Clean up previous firewall/proxy blocks
         if self._firewall_manager:
             self._firewall_manager.clear_browser_locks()
         
         if self._registry_manager:
             self._registry_manager.set_system_proxy_lockdown(False)
             
-        # 2. If Block is OFF, we are done
+        # 3. If Block is OFF, we are done
         if not self.block_all:
             if self._registry_manager:
                 self._registry_manager.set_browser_upload_policy(True)
@@ -89,7 +102,7 @@ class DataLossGuard:
             subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
             return
 
-        # 3. If Block is ON, apply surgical restrictions
+        # 4. If Block is ON, apply surgical restrictions
         self.logger.warning("Enforcing Surgical Upload Lockdown...")
         
         # Kill browsers to force policy reload
@@ -99,11 +112,10 @@ class DataLossGuard:
         subprocess.run(["taskkill", "/F", "/IM", "brave.exe", "/T"], capture_output=True)
         
         if self._registry_manager:
-            # surgical Browser Policy (Kills the 'Open File' window)
+            # surgical Browser Policy (Kills dialogs and drag-drop)
             self._registry_manager.set_browser_upload_policy(False)
             
-            # Browser Level URL Blocklist (Block common file sharing sites)
-            # This is the most reliable way to block specific upload sites
+            # URL Blocklist (Messaging + File Sharing)
             active_blacklist = [d for d in self.UPLOAD_SITE_BLACKLIST if d not in self.whitelist]
             self._registry_manager.apply_url_blocklist(active_blacklist)
             
