@@ -239,6 +239,25 @@ function Policies() {
                     <span className="block text-xs text-zinc-500 mt-0.5">Scan for PII and sensitive patterns</span>
                   </div>
                 </label>
+
+                <label className={`flex items-center p-4 rounded-xl cursor-pointer border transition-all ${newPolicy.config.uploads?.block_all ? 'bg-purple-500/10 border-purple-500/30' : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'}`}>
+                  <input
+                    type="checkbox"
+                    checked={newPolicy.config.uploads?.block_all}
+                    onChange={(e) => setNewPolicy({
+                      ...newPolicy,
+                      config: {
+                        ...newPolicy.config,
+                        uploads: { ...newPolicy.config.uploads, block_all: e.target.checked }
+                      }
+                    })}
+                    className="w-5 h-5 text-purple-600 rounded bg-zinc-800 border-zinc-700 focus:ring-purple-500 focus:ring-offset-0"
+                  />
+                  <div className="ml-3">
+                    <span className={`block text-sm font-medium ${newPolicy.config.uploads?.block_all ? 'text-purple-400' : 'text-zinc-300'}`}>Upload Protection (DLP)</span>
+                    <span className="block text-xs text-zinc-500 mt-0.5">interact with WinDivert to block HTTP POST</span>
+                  </div>
+                </label>
               </div>
             </div>
             
