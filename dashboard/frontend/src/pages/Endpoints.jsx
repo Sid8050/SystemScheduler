@@ -212,7 +212,13 @@ function Endpoints() {
                        <select
                          className="bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs rounded-lg px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
                          value={endpoint.policy_id || ''}
-                         onChange={(e) => assignPolicyMutation.mutate({ endpointId: endpoint.id, policyId: e.target.value })}
+                         onChange={(e) => {
+                           const val = e.target.value;
+                           assignPolicyMutation.mutate({ 
+                             endpointId: endpoint.id, 
+                             policyId: val ? parseInt(val) : null 
+                           })
+                         }}
                          disabled={assignPolicyMutation.isPending}
                        >
                          <option value="">Default Policy</option>
