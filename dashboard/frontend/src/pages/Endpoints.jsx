@@ -66,16 +66,30 @@ function timeAgo(dateString) {
 function Endpoints() {
   const queryClient = useQueryClient()
   const [syncingId, setSyncingId] = useState(null)
+  const [assigningId, setAssigningId] = useState(null)
   
   const { data, isLoading } = useQuery({
     queryKey: ['endpoints'],
     queryFn: () => api.getEndpoints().then(r => r.data),
     refetchInterval: 10000
   })
+
+  const { data: policiesData } = useQuery({
+    queryKey: ['policies'],
+    queryFn: () => api.getPolicies().then(r => r.data)
+  })
   
   const deleteMutation = useMutation({
     mutationFn: (id) => api.deleteEndpoint(id),
     onSuccess: () => queryClient.invalidateQueries(['endpoints']),
+  })
+
+  const assignPolicyMutation = useMutation({
+    mutationFn: ({ endpointId, policyId }) => api.applyPolicy(policyId, endpointId),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['endpoints'])
+      setAssigningId(null)
+    }
   })
 
   const handleSync = (id) => {
@@ -85,6 +99,7 @@ function Endpoints() {
   }
 
   const endpoints = data?.endpoints || []
+  const policies = policiesData?.policies || []
 
   
   return (
@@ -155,9 +170,12 @@ function Endpoints() {
                   <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
                     Hostname
                   </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                    Status
-                  </th>
+                   <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                     Policy
+                   </th>
+                   <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                     Status
+                   </th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
                     Last Seen
                   </th>
@@ -190,9 +208,22 @@ function Endpoints() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <StatusBadge status={endpoint.status} />
-                    </td>
+                     <td className="px-6 py-4 whitespace-nowrap">
+                       <select
+                         className="bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs rounded-lg px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                         value={endpoint.policy_id || ''}
+                         onChange={(e) => assignPolicyMutation.mutate({ endpointId: endpoint.id, policyId: e.target.value })}
+                         disabled={assignPolicyMutation.isPending}
+                       >
+                         <option value="">Default Policy</option>
+                         {policies.map(p => (
+                           <option key={p.id} value={p.id}>{p.name}</option>
+                         ))}
+                       </select>
+                     </td>
+                     <td className="px-6 py-4 whitespace-nowrap">
+                       <StatusBadge status={endpoint.status} />
+                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-400">
                       {timeAgo(endpoint.last_seen)}
                     </td>

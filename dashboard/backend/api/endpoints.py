@@ -237,19 +237,24 @@ async def get_merged_config(endpoint: Endpoint, db: AsyncSession) -> dict:
         "uploads": {"block_all": False, "whitelist": []}
     }
     
-    # Override with fresh config from the assigned policy
+    # Identify the correct policy to use
+    policy_to_use = None
     if endpoint.policy_id:
-        result = await db.execute(
-            select(Policy).where(Policy.id == endpoint.policy_id)
-        )
-        policy = result.scalar_one_or_none()
-        if policy and policy.config:
-            # Deep merge policy config into template
-            for key, val in policy.config.items():
-                if key in config and isinstance(config[key], dict) and isinstance(val, dict):
-                    config[key].update(val)
-                else:
-                    config[key] = val
+        result = await db.execute(select(Policy).where(Policy.id == endpoint.policy_id))
+        policy_to_use = result.scalar_one_or_none()
+    
+    # Fallback to default policy if no specific policy assigned
+    if not policy_to_use:
+        result = await db.execute(select(Policy).where(Policy.is_default == True))
+        policy_to_use = result.scalar_one_or_none()
+        
+    if policy_to_use and policy_to_use.config:
+        # Deep merge policy config into template
+        for key, val in policy_to_use.config.items():
+            if key in config and isinstance(config[key], dict) and isinstance(val, dict):
+                config[key].update(val)
+            else:
+                config[key] = val
     
     # Merge global blocked sites
     result = await db.execute(select(BlockedSite))
