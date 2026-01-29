@@ -344,6 +344,32 @@ class RegistryManager:
                 
         return success
 
+    def set_browser_upload_policy(self, allowed: bool) -> bool:
+        success = True
+        value = 1 if allowed else 0
+        
+        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.CHROME_POLICY_PATH)
+        if not self.write_value(
+            RegistryHive.HKEY_LOCAL_MACHINE,
+            self.CHROME_POLICY_PATH,
+            "FileUploadAllowed",
+            value,
+            RegistryValueType.REG_DWORD
+        ):
+            success = False
+            
+        self.create_key(RegistryHive.HKEY_LOCAL_MACHINE, self.EDGE_POLICY_PATH)
+        if not self.write_value(
+            RegistryHive.HKEY_LOCAL_MACHINE,
+            self.EDGE_POLICY_PATH,
+            "FileUploadAllowed",
+            value,
+            RegistryValueType.REG_DWORD
+        ):
+            success = False
+            
+        return success
+
     def block_removable_storage(self) -> bool:
         """
         Block all removable storage via Group Policy registry keys.
