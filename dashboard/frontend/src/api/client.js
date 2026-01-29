@@ -94,6 +94,7 @@ export const api = {
   getUSBWhitelist: () => client.get('/usb-whitelist'),
   addUSBWhitelist: (data) => client.post('/usb-whitelist', data),
   removeUSBWhitelist: (id) => client.delete(`/usb-whitelist/${id}`),
+  getConnectedUSB: () => client.get('/usb/connected'),
 
   // Upload Requests
   getUploadRequests: (params) => client.get('/uploads/requests', { params }),

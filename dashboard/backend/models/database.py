@@ -67,6 +67,7 @@ class Endpoint(Base):
     usb_events_count = Column(Integer, default=0)
     network_blocks_count = Column(Integer, default=0)
     sensitive_data_count = Column(Integer, default=0)
+    connected_usb_devices = Column(JSON, default=[])
     
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -92,7 +93,8 @@ class Endpoint(Base):
                 "backup_size": self.total_backup_size,
                 "usb_events": self.usb_events_count,
                 "network_blocks": self.network_blocks_count,
-                "sensitive_data": self.sensitive_data_count
+                "sensitive_data": self.sensitive_data_count,
+                "connected_usb_devices": self.connected_usb_devices
             }
         }
 

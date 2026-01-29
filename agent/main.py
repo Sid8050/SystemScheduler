@@ -261,17 +261,37 @@ class EndpointSecurityAgent:
 
             try:
                 stats = {}
+                usb_devices = []
+                
                 if self.file_scanner:
                     fs_stats = self.file_scanner.get_statistics()
                     stats['files_backed_up'] = fs_stats.get('total_files', 0)
                     stats['backup_size'] = fs_stats.get('total_size_bytes', 0)
+                
+                if self.usb_controller:
+                    # Get list of currently connected devices
+                    devices = self.usb_controller.get_connected_devices()
+                    usb_devices = [
+                        {
+                            "device_id": d.device_id,
+                            "vendor_id": d.vendor_id,
+                            "product_id": d.product_id,
+                            "serial_number": d.serial_number,
+                            "description": d.description,
+                            "drive_letter": d.drive_letter,
+                            "device_type": d.device_type,
+                            "connected_time": d.connected_time.isoformat()
+                        }
+                        for d in devices
+                    ]
                 
                 # Send heartbeat
                 url = f"{self.config.agent.dashboard_url}/api/v1/agent/heartbeat"
                 headers = {"X-API-Key": self.config.agent.api_key}
                 payload = {
                     "status": "online",
-                    "stats": stats
+                    "stats": stats,
+                    "usb_devices": usb_devices
                 }
                 
                 with httpx.Client(timeout=10.0) as client:

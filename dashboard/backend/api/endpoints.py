@@ -54,6 +54,7 @@ class HeartbeatRequest(BaseModel):
     """Heartbeat from agent."""
     status: str
     stats: Optional[dict] = None
+    usb_devices: Optional[List[dict]] = None
 
 
 class PolicyCreate(BaseModel):
@@ -307,6 +308,9 @@ async def agent_heartbeat(
             endpoint.total_files_backed_up = data.stats['files_backed_up']
         if 'backup_size' in data.stats:
             endpoint.total_backup_size = data.stats['backup_size']
+    
+    if data.usb_devices is not None:
+        endpoint.connected_usb_devices = data.usb_devices
     
     await db.commit()
     
@@ -646,6 +650,28 @@ async def remove_usb_whitelist(
     await db.commit()
     
     return {"status": "deleted"}
+
+
+@router.get("/usb/connected")
+async def get_all_connected_usb(
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all currently connected USB devices across all endpoints."""
+    result = await db.execute(
+        select(Endpoint).where(Endpoint.status == EndpointStatus.ONLINE)
+    )
+    endpoints = result.scalars().all()
+    
+    all_devices = []
+    for endpoint in endpoints:
+        if endpoint.connected_usb_devices:
+            for device in endpoint.connected_usb_devices:
+                device_info = device.copy()
+                device_info['hostname'] = endpoint.hostname
+                device_info['endpoint_id'] = endpoint.id
+                all_devices.append(device_info)
+                
+    return {"devices": all_devices}
 
 
 # Upload Approvals API
