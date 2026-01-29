@@ -64,23 +64,28 @@ function timeAgo(dateString) {
 }
 
 function Endpoints() {
-  const [selectedEndpoint, setSelectedEndpoint] = useState(null)
   const queryClient = useQueryClient()
+  const [syncingId, setSyncingId] = useState(null)
   
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['endpoints'],
     queryFn: () => api.getEndpoints().then(r => r.data),
-    refetchInterval: 30000,
+    refetchInterval: 10000
   })
   
   const deleteMutation = useMutation({
     mutationFn: (id) => api.deleteEndpoint(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['endpoints'])
-    },
+    onSuccess: () => queryClient.invalidateQueries(['endpoints']),
   })
-  
+
+  const handleSync = (id) => {
+    setSyncingId(id)
+    queryClient.invalidateQueries(['endpoints'])
+    setTimeout(() => setSyncingId(null), 1500)
+  }
+
   const endpoints = data?.endpoints || []
+
   
   return (
     <div className="space-y-8 animate-fade-in">
@@ -210,13 +215,22 @@ function Endpoints() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <button
-                        onClick={() => deleteMutation.mutate(endpoint.id)}
-                        className="text-zinc-500 hover:text-red-400 p-2 hover:bg-red-500/10 rounded-lg transition-all"
-                        title="Delete endpoint"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleSync(endpoint.id)}
+                          className={`p-2 rounded-lg transition-all ${syncingId === endpoint.id ? 'text-blue-400 bg-blue-500/10' : 'text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10'}`}
+                          title="Refresh Stats"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${syncingId === endpoint.id ? 'animate-spin' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => deleteMutation.mutate(endpoint.id)}
+                          className="text-zinc-500 hover:text-red-400 p-2 hover:bg-red-500/10 rounded-lg transition-all"
+                          title="Delete endpoint"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -229,45 +229,42 @@ async def delete_endpoint(
 
 async def get_merged_config(endpoint: Endpoint, db: AsyncSession) -> dict:
     """Get the latest configuration for an endpoint, merging global settings."""
-    # ALWAYS pull fresh config from the assigned policy first
-    config = {}
+    # Start with base template to ensure all keys exist
+    config = {
+        "files": {"enabled": True, "scan_paths": ["C:\\Users"]},
+        "usb": {"mode": "monitor", "whitelist": []},
+        "network": {"blocked_sites": []},
+        "uploads": {"block_all": False, "whitelist": []}
+    }
+    
+    # Override with fresh config from the assigned policy
     if endpoint.policy_id:
         result = await db.execute(
             select(Policy).where(Policy.id == endpoint.policy_id)
         )
         policy = result.scalar_one_or_none()
         if policy and policy.config:
-            config = policy.config.copy()
-    
-    # If no policy, fall back to endpoint snapshot
-    if not config:
-        config = (endpoint.config or {}).copy()
+            # Deep merge policy config into template
+            for key, val in policy.config.items():
+                if key in config and isinstance(config[key], dict) and isinstance(val, dict):
+                    config[key].update(val)
+                else:
+                    config[key] = val
     
     # Merge global blocked sites
     result = await db.execute(select(BlockedSite))
     blocked_sites = result.scalars().all()
-    
-    if 'network' not in config:
-        config['network'] = {}
-    
-    # Combine policy blocked sites with global blocked sites
-    policy_blocked = config['network'].get('blocked_sites', [])
     global_blocked = [s.domain for s in blocked_sites]
-    config['network']['blocked_sites'] = list(set(policy_blocked + global_blocked))
+    config['network']['blocked_sites'] = list(set(config['network'].get('blocked_sites', []) + global_blocked))
     
     # Merge global USB whitelist
     result = await db.execute(select(USBWhitelist))
     usb_whitelist = result.scalars().all()
-    
-    if 'usb' not in config:
-        config['usb'] = {}
-        
-    policy_whitelist = config['usb'].get('whitelist', [])
     global_whitelist = [
         {'vid': d.vendor_id, 'pid': d.product_id, 'serial': d.serial_number, 'description': d.description}
         for d in usb_whitelist
     ]
-    config['usb']['whitelist'] = policy_whitelist + global_whitelist
+    config['usb']['whitelist'] = config['usb'].get('whitelist', []) + global_whitelist
     
     return config
 

@@ -296,10 +296,13 @@ class EndpointSecurityAgent:
     def _apply_new_config(self, config_data: dict):
         """Apply new configuration received from dashboard."""
         try:
+            self.logger.info(f"Applying new configuration: {list(config_data.keys())}")
+            
             # Update network blocking
             if 'network' in config_data and self.network_guard:
                 network_cfg = config_data['network']
                 blocked_sites = network_cfg.get('blocked_sites', [])
+                self.logger.info(f"Syncing {len(blocked_sites)} blocked sites")
                 
                 # Update blocked sites in guard
                 current_blocked = set(self.network_guard.get_blocked_domains())
@@ -325,24 +328,28 @@ class EndpointSecurityAgent:
                     self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
 
             # Update DLP (Upload) blocking
-            if 'uploads' in config_data and self.dlp_guard:
-                dlp_cfg = config_data['uploads']
+            # We look for both 'uploads' and 'uploads_rules' to be safe
+            dlp_cfg = config_data.get('uploads') or config_data.get('uploads_rules')
+            
+            if dlp_cfg and self.dlp_guard:
                 block_all = dlp_cfg.get('block_all', False)
                 whitelist = dlp_cfg.get('whitelist', [])
                 
-                # Check if we need to start/stop the guard based on change
-                if block_all and not self.dlp_guard.block_all:
-                    self.dlp_guard.block_all = True
-                    self.dlp_guard.whitelist = set(s.lower() for s in whitelist)
+                self.logger.info(f"DLP Sync: block_all={block_all}, whitelist={len(whitelist)}")
+                
+                # Always call set_config which now handles its own change detection and browser killing
+                self.dlp_guard.set_config(block_all, whitelist)
+                
+                # Ensure it's running if block_all is True
+                if block_all and not self.dlp_guard._running:
                     self.dlp_guard.start()
-                elif not block_all and self.dlp_guard.block_all:
+                elif not block_all and self.dlp_guard._running:
                     self.dlp_guard.stop()
-                    self.dlp_guard.block_all = False
-                else:
-                    self.dlp_guard.set_config(block_all, whitelist)
                     
         except Exception as e:
             self.logger.error(f"Error applying new config: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
 
     def _register_agent(self) -> bool:
         """Register agent with dashboard if API key is missing."""
