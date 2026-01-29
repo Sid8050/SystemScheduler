@@ -65,17 +65,25 @@ class EndpointSecurityAgent:
         if not self.config.backup.enabled:
             return None
         
-        if not self.config.backup.s3.bucket:
+        s3_cfg = self.config.backup.s3
+        bucket = s3_cfg.bucket if hasattr(s3_cfg, 'bucket') else s3_cfg.get('bucket', '')
+        
+        if not bucket:
             self.logger.warning("S3 bucket not configured, backup disabled")
             return None
         
         try:
+            region = s3_cfg.region if hasattr(s3_cfg, 'region') else s3_cfg.get('region', 'us-east-1')
+            access_key = s3_cfg.access_key_id if hasattr(s3_cfg, 'access_key_id') else s3_cfg.get('access_key_id')
+            secret_key = s3_cfg.secret_access_key if hasattr(s3_cfg, 'secret_access_key') else s3_cfg.get('secret_access_key')
+            storage_class = s3_cfg.storage_class if hasattr(s3_cfg, 'storage_class') else s3_cfg.get('storage_class', 'STANDARD_IA')
+            
             return S3Client(
-                bucket=self.config.backup.s3.bucket,
-                region=self.config.backup.s3.region,
-                access_key_id=self.config.backup.s3.access_key_id,
-                secret_access_key=self.config.backup.s3.secret_access_key,
-                storage_class=self.config.backup.s3.storage_class,
+                bucket=bucket,
+                region=region,
+                access_key_id=access_key,
+                secret_access_key=secret_key,
+                storage_class=storage_class,
                 max_mbps=self.config.backup.throttle_max_mbps if self.config.backup.throttle_enabled else None
             )
         except Exception as e:
