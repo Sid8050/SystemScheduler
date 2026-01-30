@@ -210,6 +210,9 @@ class USBController:
                 if not pnp_id.startswith('USB'):
                     continue
                 
+                if any(d.device_id == pnp_id for d in devices):
+                    continue
+
                 service = (pnp.Service or '').lower()
                 compatible_ids = pnp.CompatibleID or []
                 
@@ -227,25 +230,42 @@ class USBController:
                 
                 parsed = self._parse_device_id(pnp_id)
                 
-                drive_letter = None
-                if device_type == 'mass_storage':
-                    for disk in c.Win32_DiskDrive(InterfaceType='USB'):
-                        if disk.PNPDeviceID == pnp_id:
-                            for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
-                                for logical in partition.associators("Win32_LogicalDiskToPartition"):
-                                    drive_letter = logical.DeviceID
-                                    break
-                
                 devices.append(USBDevice(
                     device_id=pnp_id,
                     vendor_id=parsed['vid'],
                     product_id=parsed['pid'],
                     serial_number=parsed['serial'] or None,
                     description=pnp.Caption or pnp.Description or 'Unknown USB Device',
-                    drive_letter=drive_letter,
+                    drive_letter=None,
                     device_type=device_type,
                     connected_time=datetime.now()
                 ))
+
+            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
+                pnp_id = disk.PNPDeviceID
+                
+                drive_letter = None
+                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
+                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
+                        drive_letter = logical.DeviceID
+                        break
+                
+                existing = next((d for d in devices if d.device_id == pnp_id), None)
+                if existing:
+                    existing.drive_letter = drive_letter
+                    existing.device_type = 'mass_storage'
+                else:
+                    parsed = self._parse_device_id(pnp_id)
+                    devices.append(USBDevice(
+                        device_id=pnp_id,
+                        vendor_id=parsed['vid'],
+                        product_id=parsed['pid'],
+                        serial_number=parsed['serial'] or None,
+                        description=disk.Caption or disk.Model or 'USB Storage Device',
+                        drive_letter=drive_letter,
+                        device_type='mass_storage',
+                        connected_time=datetime.now()
+                    ))
             
         except Exception as e:
             print(f"Error getting USB devices: {e}")

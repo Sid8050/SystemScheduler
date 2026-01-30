@@ -47,7 +47,7 @@ function USBControl() {
   })
 
   const updatePolicyMutation = useMutation({
-    mutationFn: ({ id, config }) => api.updatePolicy(id, { name: 'Default', config }),
+    mutationFn: ({ id, name, config }) => api.updatePolicy(id, { name, config }),
     onSuccess: () => {
       queryClient.invalidateQueries(['policies'])
     },
@@ -59,11 +59,16 @@ function USBControl() {
   const usbMode = defaultPolicy?.config?.usb?.mode || 'monitor'
   
   const handleToggleUSB = () => {
+    if (!defaultPolicy) return
     const nextMode = usbMode === 'block' ? 'monitor' : 'block'
     const newConfig = { ...defaultPolicy.config }
     if (!newConfig.usb) newConfig.usb = {}
     newConfig.usb.mode = nextMode
-    updatePolicyMutation.mutate({ id: defaultPolicy.id, config: newConfig })
+    updatePolicyMutation.mutate({ 
+      id: defaultPolicy.id, 
+      name: defaultPolicy.name, 
+      config: newConfig 
+    })
   }
 
   const getDeviceIcon = (type) => {
@@ -100,9 +105,9 @@ function USBControl() {
                 className="sr-only peer" 
                 checked={usbMode === 'block'}
                 onChange={handleToggleUSB}
-                disabled={!defaultPolicy}
+                disabled={!defaultPolicy || updatePolicyMutation.isPending}
               />
-              <div className="w-11 h-6 bg-zinc-700 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+              <div className={`w-11 h-6 bg-zinc-700 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all ${updatePolicyMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
             </label>
           </div>
           <button
