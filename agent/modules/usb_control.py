@@ -289,22 +289,58 @@ class USBController:
         
         return devices
     
+    # Device types that should NEVER be blocked (critical system devices)
+    PROTECTED_DEVICE_TYPES = {'hid', 'hub', 'bluetooth', 'network', 'audio', 'video', 'printer'}
+
+    def _is_protected_device(self, device: USBDevice) -> bool:
+        """
+        Check if device is a protected type that should NEVER be blocked.
+        This includes mice, keyboards, network adapters, Bluetooth, etc.
+        """
+        # Protected by device type
+        if device.device_type in self.PROTECTED_DEVICE_TYPES:
+            return True
+
+        # Additional protection by description keywords
+        desc_lower = device.description.lower()
+        protected_keywords = [
+            'keyboard', 'mouse', 'hid', 'input device',
+            'bluetooth', 'wireless', 'lan', 'ethernet', 'network',
+            'audio', 'sound', 'speaker', 'microphone',
+            'webcam', 'camera', 'video',
+            'hub', 'root hub',
+            'printer', 'scanner'
+        ]
+
+        for keyword in protected_keywords:
+            if keyword in desc_lower:
+                return True
+
+        return False
+
     def _should_block_device(self, device: USBDevice) -> tuple:
         """
         Determine if a device should be blocked.
-        
+
         Returns: (should_block, reason)
         """
+        # NEVER block protected devices (mice, keyboards, network, etc.)
+        if self._is_protected_device(device):
+            return False, None
+
         if self.mode == USBMode.MONITOR:
             return False, None
-        
+
         # Check whitelist first
         if self.mode == USBMode.WHITELIST:
             if device.matches_whitelist(self.whitelist):
                 return False, None
+            # Even in whitelist mode, don't block non-storage devices
+            if device.device_type not in ('mass_storage', 'mtp', 'ptp'):
+                return False, None
             return True, "Device not in whitelist"
-        
-        # Block mode - check device type
+
+        # Block mode - ONLY block storage-type devices
         if self.mode == USBMode.BLOCK:
             if device.device_type == 'mass_storage' and self.block_mass_storage:
                 return True, "Mass storage devices are blocked"
@@ -312,7 +348,7 @@ class USBController:
                 return True, "MTP devices are blocked"
             if device.device_type == 'ptp' and self.block_ptp:
                 return True, "PTP devices are blocked"
-        
+
         return False, None
     
     def _block_device(self, device: USBDevice, reason: str):
@@ -488,15 +524,23 @@ class USBController:
                 self._registry.unblock_removable_storage()
 
     def _eject_all_mass_storage(self):
-        """Eject all currently connected mass storage devices."""
+        """Eject all currently connected mass storage devices (NOT mice/keyboards/network)."""
         if win32file is None:
             return
 
         for device in list(self._connected_devices.values()):
+            # SAFETY: Skip protected devices (mice, keyboards, network, etc.)
+            if self._is_protected_device(device):
+                continue
+
+            # Only eject mass storage devices with drive letters
             if device.device_type == 'mass_storage' and device.drive_letter:
                 # Check if whitelisted
                 if device.matches_whitelist(self.whitelist):
+                    print(f"Skipping whitelisted device: {device.description}")
                     continue
+
+                print(f"Ejecting USB storage: {device.description} ({device.drive_letter})")
                 try:
                     drive = f"\\\\.\\{device.drive_letter}"
                     handle = win32file.CreateFile(
