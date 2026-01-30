@@ -664,13 +664,15 @@ async def get_all_connected_usb(
 ):
     """Get all currently connected USB devices across all endpoints."""
     try:
-        result = await db.execute(
-            select(Endpoint).where(Endpoint.status == EndpointStatus.ONLINE)
-        )
-        endpoints = result.scalars().all()
-        
+        # Get all endpoints (not just online) to help with debugging
+        result = await db.execute(select(Endpoint))
+        all_endpoints = result.scalars().all()
+
+        # Filter to online endpoints for device list
+        online_endpoints = [e for e in all_endpoints if e.status == EndpointStatus.ONLINE]
+
         all_devices = []
-        for endpoint in endpoints:
+        for endpoint in online_endpoints:
             usb_list = endpoint.connected_usb_devices
             if usb_list and isinstance(usb_list, list):
                 for device in usb_list:
@@ -679,10 +681,47 @@ async def get_all_connected_usb(
                         device_info['hostname'] = endpoint.hostname
                         device_info['endpoint_id'] = endpoint.id
                         all_devices.append(device_info)
-                        
+
+        # Include debug info if no devices found
+        if not all_devices:
+            print(f"[USB DEBUG] Total endpoints: {len(all_endpoints)}, Online: {len(online_endpoints)}")
+            for ep in all_endpoints:
+                print(f"  - {ep.hostname}: status={ep.status.value if ep.status else 'None'}, usb_devices={ep.connected_usb_devices}")
+
         return {"devices": all_devices}
     except Exception as e:
         print(f"Error in get_all_connected_usb: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/usb/debug")
+async def debug_usb_status(
+    db: AsyncSession = Depends(get_db)
+):
+    """Debug endpoint to check USB status across all endpoints."""
+    try:
+        result = await db.execute(select(Endpoint))
+        endpoints = result.scalars().all()
+
+        debug_info = []
+        for ep in endpoints:
+            debug_info.append({
+                "id": ep.id,
+                "hostname": ep.hostname,
+                "status": ep.status.value if ep.status else None,
+                "last_seen": ep.last_seen.isoformat() if ep.last_seen else None,
+                "connected_usb_devices": ep.connected_usb_devices,
+                "usb_device_count": len(ep.connected_usb_devices) if ep.connected_usb_devices else 0
+            })
+
+        return {
+            "total_endpoints": len(endpoints),
+            "online_count": sum(1 for e in endpoints if e.status == EndpointStatus.ONLINE),
+            "endpoints": debug_info
+        }
+    except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
