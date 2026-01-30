@@ -51,23 +51,39 @@ function USBControl() {
     onSuccess: () => {
       queryClient.invalidateQueries(['policies'])
     },
+    onError: (error) => {
+      console.error('Failed to update policy:', error)
+      alert('Failed to update USB policy: ' + (error.response?.data?.detail || error.message))
+    }
   })
-  
+
   const whitelist = whitelistData?.devices || []
   const connected = connectedData?.devices || []
   const defaultPolicy = policiesData?.policies?.find(p => p.is_default)
   const usbMode = defaultPolicy?.config?.usb?.mode || 'monitor'
-  
+
+  // Debug log
+  console.log('USB Control Debug:', {
+    policiesData,
+    defaultPolicy,
+    usbMode,
+    isPending: updatePolicyMutation.isPending
+  })
+
   const handleToggleUSB = () => {
-    if (!defaultPolicy) return
+    if (!defaultPolicy) {
+      alert('No default policy found. Please restart the backend server.')
+      return
+    }
     const nextMode = usbMode === 'block' ? 'monitor' : 'block'
+    console.log(`Toggling USB mode from ${usbMode} to ${nextMode}`)
     const newConfig = { ...defaultPolicy.config }
     if (!newConfig.usb) newConfig.usb = {}
     newConfig.usb.mode = nextMode
-    updatePolicyMutation.mutate({ 
-      id: defaultPolicy.id, 
-      name: defaultPolicy.name, 
-      config: newConfig 
+    updatePolicyMutation.mutate({
+      id: defaultPolicy.id,
+      name: defaultPolicy.name,
+      config: newConfig
     })
   }
 

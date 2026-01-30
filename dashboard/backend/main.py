@@ -10,10 +10,42 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
-from .models.database import init_db, engine, Base
+from .models.database import init_db, engine, Base, async_session, Policy
 from .api.endpoints import router as api_router
 from .api.auth import router as auth_router
 from .api.schedules import router as schedules_router, Schedule, ScheduleRun
+from sqlalchemy import select
+
+
+async def ensure_default_policy():
+    """Create a default policy if none exists."""
+    async with async_session() as db:
+        result = await db.execute(select(Policy).where(Policy.is_default == True))
+        default_policy = result.scalar_one_or_none()
+
+        if not default_policy:
+            print("Creating default security policy...")
+            default_policy = Policy(
+                name="Default Policy",
+                description="Default security policy for all endpoints",
+                is_default=True,
+                config={
+                    "files": {"enabled": True, "scan_paths": ["C:\\Users"]},
+                    "usb": {
+                        "mode": "monitor",
+                        "block_mass_storage": True,
+                        "block_mtp": True,
+                        "block_ptp": False
+                    },
+                    "network": {"blocked_sites": []},
+                    "uploads": {"block_all": False, "whitelist": []}
+                }
+            )
+            db.add(default_policy)
+            await db.commit()
+            print("Default policy created successfully")
+        else:
+            print(f"Default policy exists: {default_policy.name}")
 
 
 @asynccontextmanager
@@ -25,6 +57,10 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("Database initialized")
+
+    # Ensure default policy exists
+    await ensure_default_policy()
+
     yield
     # Shutdown
     print("Shutting down...")
