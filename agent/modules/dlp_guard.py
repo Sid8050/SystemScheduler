@@ -51,6 +51,13 @@ class DataLossGuard:
         "insert file", "attach file", "attach files"
     ]
 
+    # Our own processes that should be allowed to use file dialogs
+    WHITELISTED_PROCESSES = [
+        "request_ui",           # Our upload request UI
+        "endpoint security",    # Our agent
+        "uploadrequest",
+    ]
+
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
         self.logger = logger
         self.block_all = block_all
@@ -67,6 +74,7 @@ class DataLossGuard:
             "SecureUploadGateway"
         )
         self._blocked_count = 0
+        self._our_pid = os.getpid()  # Our own process ID
 
     def _apply_upload_block(self, block: bool):
         """Apply or remove upload blocking via registry."""
@@ -96,7 +104,7 @@ class DataLossGuard:
             return False
 
     def _is_file_dialog(self, hwnd) -> bool:
-        """Check if a window handle is a file dialog."""
+        """Check if a window handle is a file dialog that should be blocked."""
         if not HAS_WIN32:
             return False
 
@@ -104,6 +112,31 @@ class DataLossGuard:
             # Get window properties
             class_name = win32gui.GetClassName(hwnd)
             title = win32gui.GetWindowText(hwnd).lower()
+
+            # Get the process that owns this window
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+
+            # NEVER block our own process's dialogs
+            if pid == self._our_pid:
+                return False
+
+            # Check if it's one of our whitelisted processes
+            try:
+                proc = psutil.Process(pid)
+                proc_name = proc.name().lower()
+                cmdline = ' '.join(proc.cmdline()).lower()
+
+                # Skip our own tools
+                for whitelist_term in self.WHITELISTED_PROCESSES:
+                    if whitelist_term in proc_name or whitelist_term in cmdline:
+                        return False
+
+                # Skip if it's python running our scripts
+                if 'python' in proc_name:
+                    if 'request_ui' in cmdline or 'agent' in cmdline:
+                        return False
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
             # Check class name
             if class_name in self.DIALOG_CLASSES:
@@ -113,11 +146,9 @@ class DataLossGuard:
                     if any(t in title for t in self.DIALOG_TITLES):
                         return True
                     # Or has typical file dialog child windows
-                    # Check for file list view or path combo
                     def check_children(child_hwnd, found):
                         try:
                             child_class = win32gui.GetClassName(child_hwnd)
-                            # File dialogs have SysListView32 (file list) or ComboBoxEx32 (path bar)
                             if child_class in ("SysListView32", "ComboBoxEx32", "ToolbarWindow32"):
                                 found.append(True)
                         except:
@@ -129,16 +160,14 @@ class DataLossGuard:
                         win32gui.EnumChildWindows(hwnd, check_children, found)
                     except:
                         pass
-                    if len(found) >= 2:  # Has multiple file dialog elements
+                    if len(found) >= 2:
                         return True
                 else:
                     return True
 
-            # Check title keywords for any window
+            # Check title keywords for browser-owned windows
             if any(t in title for t in self.DIALOG_TITLES):
-                # Additional check: is it owned by a browser?
                 try:
-                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     proc = psutil.Process(pid)
                     proc_name = proc.name().lower()
                     browser_names = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'browser']

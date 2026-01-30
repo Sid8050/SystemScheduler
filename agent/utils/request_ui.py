@@ -50,13 +50,16 @@ class UploadRequestApp:
         # File Section
         file_frame = tk.Frame(self.root, bg="#09090b", padx=20)
         file_frame.pack(fill="x")
-        
-        tk.Label(file_frame, text="Request New File:", bg="#09090b", foreground="#71717a").pack(anchor="w")
-        
+
+        tk.Label(file_frame, text="File Path (type, paste, or browse):", bg="#09090b", foreground="#71717a").pack(anchor="w")
+
         self.file_path_var = tk.StringVar()
         entry = tk.Entry(file_frame, textvariable=self.file_path_var, bg="#18181b", fg="#ffffff", insertbackground="#ffffff", border=0, highlightthickness=1, highlightbackground="#27272a")
         entry.pack(fill="x", pady=5, ipady=5)
-        
+
+        # Hint text
+        tk.Label(file_frame, text="💡 Tip: You can paste the full path like C:\\Users\\...\\file.pdf", bg="#09090b", foreground="#52525b", font=("Inter", 8)).pack(anchor="w")
+
         btn_browse = tk.Button(file_frame, text="Browse File", command=self._browse_file, bg="#27272a", fg="#ffffff", activebackground="#3f3f46", border=0, padx=10, pady=5)
         btn_browse.pack(anchor="e")
         
