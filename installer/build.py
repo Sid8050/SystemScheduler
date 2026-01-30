@@ -55,6 +55,16 @@ def check_requirements():
     return True
 
 
+def get_icon_path(icon_name):
+    """Get icon path, handling both development and CI environments."""
+    icon_path = INSTALLER_DIR / "assets" / icon_name
+    if icon_path.exists():
+        return str(icon_path)
+    # Fallback - no icon
+    print(f"  Warning: Icon not found: {icon_path}")
+    return None
+
+
 def build_agent():
     """Build the main agent executable."""
     print("\n=== Building Endpoint Security Agent ===")
@@ -64,7 +74,6 @@ def build_agent():
         "pyinstaller",
         "--onefile",
         "--name=EndpointSecurityAgent",
-        "--icon=installer/assets/shield.ico",
         "--hidden-import=win32timezone",
         "--hidden-import=win32serviceutil",
         "--hidden-import=win32service",
@@ -73,11 +82,21 @@ def build_agent():
         "--hidden-import=wmi",
         "--hidden-import=pythoncom",
         "--hidden-import=pywintypes",
-        "--add-data=config;config",
         "--uac-admin",  # Request admin rights
         "--noconsole",  # No console window (runs as service)
-        str(AGENT_DIR / "main.py"),
     ]
+
+    # Add icon if available
+    icon = get_icon_path("shield.ico")
+    if icon:
+        options.append(f"--icon={icon}")
+
+    # Add config data if exists
+    config_dir = PROJECT_ROOT / "config"
+    if config_dir.exists():
+        options.append("--add-data=config;config")
+
+    options.append(str(AGENT_DIR / "main.py"))
 
     result = subprocess.run(options, cwd=PROJECT_ROOT)
     if result.returncode != 0:
@@ -96,12 +115,19 @@ def build_tray():
         "pyinstaller",
         "--onefile",
         "--name=EndpointSecurityTray",
-        "--icon=installer/assets/shield.ico",
         "--hidden-import=pystray",
         "--hidden-import=PIL",
+        "--hidden-import=PIL.Image",
+        "--hidden-import=PIL.ImageDraw",
         "--noconsole",
-        str(AGENT_DIR / "utils" / "system_tray.py"),
     ]
+
+    # Add icon if available
+    icon = get_icon_path("shield.ico")
+    if icon:
+        options.append(f"--icon={icon}")
+
+    options.append(str(AGENT_DIR / "utils" / "system_tray.py"))
 
     result = subprocess.run(options, cwd=PROJECT_ROOT)
     if result.returncode != 0:
@@ -120,10 +146,15 @@ def build_request_ui():
         "pyinstaller",
         "--onefile",
         "--name=RequestUpload",
-        "--icon=installer/assets/upload.ico",
         "--noconsole",
-        str(AGENT_DIR / "utils" / "request_ui.py"),
     ]
+
+    # Add icon if available
+    icon = get_icon_path("upload.ico")
+    if icon:
+        options.append(f"--icon={icon}")
+
+    options.append(str(AGENT_DIR / "utils" / "request_ui.py"))
 
     result = subprocess.run(options, cwd=PROJECT_ROOT)
     if result.returncode != 0:
