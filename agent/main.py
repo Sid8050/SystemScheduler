@@ -33,6 +33,13 @@ from agent.modules.dlp_guard import DataLossGuard
 from agent.modules.data_detector import DataDetector, Detection
 from agent.utils.s3_client import S3Client
 
+# Try to import system tray (optional)
+try:
+    from agent.utils.system_tray import SystemTrayApp
+    HAS_TRAY = True
+except ImportError:
+    HAS_TRAY = False
+
 
 class EndpointSecurityAgent:
     """
@@ -60,6 +67,7 @@ class EndpointSecurityAgent:
         # State
         self._running = False
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._system_tray: Optional[object] = None
     
     def _init_s3_client(self) -> Optional[S3Client]:
         """Initialize S3 client if backup is enabled."""
@@ -482,7 +490,16 @@ class EndpointSecurityAgent:
         # Start heartbeat thread
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
-        
+
+        # Start system tray if available and running in foreground
+        if HAS_TRAY:
+            try:
+                self._system_tray = SystemTrayApp(agent=self)
+                self._system_tray.run_detached()
+                self.logger.info("System tray started")
+            except Exception as e:
+                self.logger.warning(f"Could not start system tray: {e}")
+
         self.logger.info("Endpoint Security Agent fully started")
     
     def stop(self):
