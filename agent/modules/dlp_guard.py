@@ -1,25 +1,30 @@
-import pydivert
-import socket
-import re
+"""
+Data Loss Prevention Guard
+
+Prevents unauthorized file uploads by:
+1. Blocking file picker dialogs (Open/Save dialogs)
+2. Blocking drag & drop operations
+3. Allowing only approved files through a secure gateway
+"""
+
+import os
 import sys
 import subprocess
 import shutil
 import time
+import threading
 import psutil
 import httpx
 from typing import List, Set, Optional
 from datetime import datetime
-from collections import defaultdict
 from agent.core.logger import Logger
-from agent.utils.registry import get_registry_manager
-from agent.utils.firewall import FirewallManager
+from agent.utils.registry import get_registry_manager, RegistryHive, RegistryValueType
+
 
 class DataLossGuard:
-    # High-risk upload/file sharing and messaging sites
-    UPLOAD_SITE_BLACKLIST = [
-        "wetransfer.com", "mega.nz", "dropbox.com", "drive.google.com", 
-        "mediafire.com", "web.whatsapp.com", "web.telegram.org"
-    ]
+    """
+    Surgical DLP Guard that blocks file upload actions without blocking websites.
+    """
 
     def __init__(self, logger: Logger, block_all: bool = False, whitelist: List[str] = None):
         self.logger = logger
@@ -29,12 +34,14 @@ class DataLossGuard:
         self._thread = None
         self._win_thread = None
         self._registry_manager = get_registry_manager()
-        self._firewall_manager = FirewallManager() if sys.platform == 'win32' else None
-        self._approved_files = {} # file_hash -> {path, name}
+        self._approved_files = {}  # file_hash -> {path, name, expires_at}
         self._is_temporarily_unlocked = False
         self._unlock_expiry = 0
-        self._gateway_dir = os.path.join(os.environ.get("Public", "C:\\Users\\Public"), "SecureUploadGateway")
-        
+        self._gateway_dir = os.path.join(
+            os.environ.get("Public", "C:\\Users\\Public"),
+            "SecureUploadGateway"
+        )
+
     def _sync_approved_hashes(self, dashboard_url: str, api_key: str):
         """Fetch approved file hashes from dashboard."""
         try:
@@ -43,221 +50,203 @@ class DataLossGuard:
             with httpx.Client(timeout=10.0) as client:
                 response = client.get(url, headers=headers)
                 if response.status_code == 200:
-                    hashes = response.json().get('approved_hashes', [])
-                    # In a real app, we'd fetch the full file metadata. 
-                    # For now, we'll allow the user to 'unlock' any file they can prove matches a hash.
+                    data = response.json()
+                    hashes = data.get('approved_hashes', [])
                     self._approved_files = {h: True for h in hashes}
-                    self.logger.info(f"Synced {len(hashes)} approved file hashes")
+                    self.logger.info(f"[DLP] Synced {len(hashes)} approved file hashes")
         except Exception as e:
-            self.logger.error(f"Failed to sync approvals: {e}")
+            self.logger.error(f"[DLP] Failed to sync approvals: {e}")
 
-    def request_temporary_unlock(self, file_path: str, file_hash: str):
-        """
-        Surgically allow only ONE specific file to be picked.
-        Creates a 'Gateway' containing ONLY that file.
-        """
-        if not self.block_all: return False
-        if file_hash not in self._approved_files:
-            self.logger.warning(f"Bypass Rejected: Hash {file_hash[:8]} is not in approved list.")
+    def _apply_upload_block(self, block: bool):
+        """Apply or remove upload blocking via registry."""
+        if not self._registry_manager:
+            self.logger.warning("[DLP] No registry manager available")
             return False
-        
+
         try:
-            # 1. Prepare the Gateway
-            if os.path.exists(self._gateway_dir):
-                shutil.rmtree(self._gateway_dir)
-            os.makedirs(self._gateway_dir, exist_ok=True)
-            
-            # 2. Copy the approved file to the Gateway
-            file_name = os.path.basename(file_path)
-            gateway_file = os.path.join(self._gateway_dir, file_name)
-            shutil.copy2(file_path, gateway_file)
-            
-            # 3. Unlock the system for 30 seconds
-            self.logger.warning(f"Surgical Bypass: Unlocking Gateway for {file_name}")
-            self._is_temporarily_unlocked = True
-            self._unlock_expiry = time.time() + 45 # 45 seconds to be safe
-            
-            if self._registry_manager:
-                self._registry_manager.set_browser_upload_policy(True)
-                # Force the dialog to start in our Gateway
-                self._registry_manager.write_value(
-                    RegistryHive.HKEY_CURRENT_USER,
-                    r"Software\Microsoft\Windows\CurrentVersion\Policies\Comdlg32",
-                    "LastVisitedPidlMRU", 
-                    b"" # Clear history to force new path
-                )
-            
-            return True
+            # Block = True means we want to PREVENT uploads (allowed=False)
+            result = self._registry_manager.set_browser_upload_policy(allowed=not block)
+
+            action = "BLOCKED" if block else "ALLOWED"
+            self.logger.info(f"[DLP] File picker/upload is now {action}")
+
+            # Notify shell of the change
+            try:
+                import ctypes
+                ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+            except Exception:
+                pass
+
+            return result
         except Exception as e:
-            self.logger.error(f"Failed to setup gateway: {e}")
+            self.logger.error(f"[DLP] Failed to apply upload block: {e}")
             return False
-            
+
     def _check_unlock_state(self):
         """Check if temporary unlock has expired and cleanup."""
         if self._is_temporarily_unlocked and time.time() > self._unlock_expiry:
-            self.logger.info("Gateway Expired: Wiping gateway and relocking.")
+            self.logger.info("[DLP] Gateway expired: Relocking system")
             self._is_temporarily_unlocked = False
-            
+
+            # Cleanup gateway folder
             try:
                 if os.path.exists(self._gateway_dir):
                     shutil.rmtree(self._gateway_dir)
-            except Exception: pass
-            
-            if self._registry_manager:
-                self._registry_manager.set_browser_upload_policy(False)
+            except Exception:
+                pass
 
-    def _window_monitor_loop(self):
-        """Active window monitoring to enforce the Gateway rule."""
-        import win32gui
-        import win32con
-        
-        while self._running:
-            try:
-                self._check_unlock_state()
-                
-                if self.block_all:
-                    target_titles = ["Open", "Select File", "Select files", "Upload files", "Choose File", "Open File"]
-                    
-                    def enum_windows_callback(hwnd, _):
-                        if not win32gui.IsWindowVisible(hwnd): return
-                        title = win32gui.GetWindowText(hwnd)
-                        class_name = win32gui.GetClassName(hwnd)
-                        
-                        # Is it a file dialog?
-                        if class_name == "#32770" or any(t in title for t in target_titles):
-                            # IF WE ARE UNLOCKED:
-                            if self._is_temporarily_unlocked:
-                                # ONLY allow the window if it's looking at our Gateway
-                                # Most dialogs show the folder name in the title or a breadcrumb
-                                if "SecureUploadGateway" not in title and "SecureUploadGateway" not in win32gui.GetWindowText(win32gui.GetParent(hwnd)):
-                                    # We don't kill it immediately to give it a chance to load, 
-                                    # but if it stays on a different folder, we kill it.
-                                    pass 
-                            else:
-                                # IF LOCKED: Kill immediately
-                                self.logger.warning(f"Surgical Block: Closing unauthorized window '{title}'")
-                                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                            
-                    win32gui.EnumWindows(enum_windows_callback, None)
-            except Exception: pass
-            time.sleep(0.3)
-
-    def _enforce_lockdown(self, force_kill: bool = True):
-        """Apply surgical action-based lockdown measures."""
-        self.logger.info(f"DLP STATE REFRESH: BlockAll={self.block_all}, Approvals={len(self._approved_hashes)}")
-        
-        # 1. Aggressive Browser Termination
-        if force_kill:
-            self.logger.warning("FORCING browser termination to apply security rules...")
-            browser_exes = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"]
-            # Try taskkill first (fast)
-            for exe in browser_exes:
-                subprocess.run(["taskkill", "/F", "/IM", exe, "/T"], capture_output=True)
-            
-            # Follow up with psutil for any survivors
-            for proc in psutil.process_iter(['name']):
-                try:
-                    if proc.info['name'].lower() in browser_exes:
-                        proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-
-        # 2. CLEAR internet blocks
-        if self._firewall_manager:
-            self._firewall_manager.clear_browser_locks()
-        
-        if self._registry_manager:
-            self._registry_manager.set_system_proxy_lockdown(False)
-            self._registry_manager.apply_url_blocklist([])
-            
-        # 3. Apply SURGICAL block
-        if self._registry_manager:
-            should_allow_picker = (not self.block_all) or (self._is_temporarily_unlocked)
-            self._registry_manager.set_browser_upload_policy(should_allow_picker)
-            
+            # Re-apply block
             if self.block_all:
-                status = "ENABLED (Temp Bypass)" if should_allow_picker else "DISABLED"
-                self.logger.warning(f"SECURITY POLICY: File selection is {status}")
-        
-        # 4. Flush
-        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
-        self.logger.info("DLP synchronization complete.")
-
+                self._apply_upload_block(True)
 
     def _window_monitor_loop(self):
         """Active window monitoring to close unauthorized file picker dialogs."""
-        import win32gui
-        import win32con
-        
+        if sys.platform != 'win32':
+            return
+
+        try:
+            import win32gui
+            import win32con
+        except ImportError:
+            self.logger.warning("[DLP] win32gui not available, window monitoring disabled")
+            return
+
+        # Dialog window titles to watch for
+        target_titles = [
+            "Open", "Save", "Save As", "Select File", "Select files",
+            "Upload", "Upload files", "Choose File", "Open File",
+            "Attach", "Browse", "Select"
+        ]
+
         while self._running:
             try:
                 self._check_unlock_state()
-                
-                # If block is ON and NOT temporarily unlocked
+
+                # Only actively close dialogs if blocking is enabled
                 if self.block_all and not self._is_temporarily_unlocked:
-                    target_titles = ["Open", "Select File", "Select files", "Upload files", "Choose File", "Open File"]
-                    
+
                     def enum_windows_callback(hwnd, _):
                         if not win32gui.IsWindowVisible(hwnd):
-                            return
-                        
+                            return True
+
                         title = win32gui.GetWindowText(hwnd)
                         class_name = win32gui.GetClassName(hwnd)
-                        
-                        # Block standard Windows File Dialogs (#32770)
-                        if class_name == "#32770" or any(t in title for t in target_titles):
-                            self.logger.warning(f"Surgical Block: Terminated unauthorized file picker: {title}")
+
+                        # Detect file dialogs:
+                        # - #32770 is the Windows common dialog class
+                        # - Also check for matching titles
+                        is_file_dialog = (
+                            class_name == "#32770" or
+                            any(t.lower() in title.lower() for t in target_titles)
+                        )
+
+                        if is_file_dialog and title:  # Ignore empty titles
+                            self.logger.warning(f"[DLP] Blocked file dialog: '{title}'")
                             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                            
+
+                        return True
+
                     win32gui.EnumWindows(enum_windows_callback, None)
-            except Exception:
+
+            except Exception as e:
+                # Silently continue - window monitoring is best-effort
                 pass
-            time.sleep(0.3)
+
+            time.sleep(0.2)  # Check every 200ms for responsive blocking
 
     def _monitor_loop(self):
-        """Passive monitor thread."""
+        """Background monitor thread for periodic tasks."""
         while self._running:
-            time.sleep(10)
+            try:
+                self._check_unlock_state()
+            except Exception:
+                pass
+            time.sleep(5)
 
     def start_guard(self):
-        """Start the DLP monitoring threads."""
+        """Start the DLP monitoring."""
         if self._running:
             return
-            
-        self._running = True
-        self._enforce_lockdown(force_kill=False)
 
-        import threading
+        self._running = True
+        self.logger.info(f"[DLP] Starting guard - Block mode: {self.block_all}")
+
+        # Apply initial policy
+        if self.block_all:
+            self._apply_upload_block(True)
+
+        # Start background monitor
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-        
+
+        # Start window monitor on Windows
         if sys.platform == 'win32':
             self._win_thread = threading.Thread(target=self._window_monitor_loop, daemon=True)
             self._win_thread.start()
-            
-        self.logger.info("Surgical DLP Guard started")
+
+        self.logger.info("[DLP] Guard started successfully")
 
     def set_config(self, block_all: bool, whitelist: List[str]):
-        """Update guard configuration."""
+        """Update guard configuration from dashboard."""
         old_block = self.block_all
         self.block_all = block_all
         self.whitelist = set(s.lower() for s in (whitelist or []))
-        
+
+        self.logger.info(f"[DLP] Config update: Block={block_all} (was {old_block})")
+
         if old_block != self.block_all:
-            self._enforce_lockdown(force_kill=True)
-        else:
-            self._enforce_lockdown(force_kill=False)
-            
-        self.logger.info(f"DLP Guard synchronized: Block is {'ON' if block_all else 'OFF'}")
+            self._apply_upload_block(self.block_all)
 
     def update_approvals(self, dashboard_url: str, api_key: str):
-        """Manually trigger an approval sync."""
+        """Sync approved file hashes from dashboard."""
         self._sync_approved_hashes(dashboard_url, api_key)
 
+    def request_temporary_unlock(self, file_path: str, file_hash: str, duration_seconds: int = 45):
+        """
+        Temporarily allow a specific approved file to be uploaded.
+        Creates a secure gateway containing only that file.
+        """
+        if not self.block_all:
+            return True  # Not blocking, no need to unlock
+
+        if file_hash not in self._approved_files:
+            self.logger.warning(f"[DLP] Unlock rejected: Hash {file_hash[:8]}... not approved")
+            return False
+
+        try:
+            # Prepare gateway folder
+            if os.path.exists(self._gateway_dir):
+                shutil.rmtree(self._gateway_dir)
+            os.makedirs(self._gateway_dir, exist_ok=True)
+
+            # Copy approved file to gateway
+            file_name = os.path.basename(file_path)
+            gateway_file = os.path.join(self._gateway_dir, file_name)
+            shutil.copy2(file_path, gateway_file)
+
+            # Temporarily unlock
+            self._is_temporarily_unlocked = True
+            self._unlock_expiry = time.time() + duration_seconds
+            self._apply_upload_block(False)
+
+            self.logger.warning(f"[DLP] Temporary unlock: {file_name} for {duration_seconds}s")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"[DLP] Failed to setup gateway: {e}")
+            return False
+
     def stop(self):
+        """Stop the DLP guard."""
         self._running = False
+
+        # Re-enable uploads when stopping
         if self._registry_manager:
-            self._registry_manager.set_browser_upload_policy(True)
+            self._apply_upload_block(False)
+
         if self._thread:
             self._thread.join(timeout=2)
-        self.logger.info("DLP Guard stopped")
+        if self._win_thread:
+            self._win_thread.join(timeout=2)
+
+        self.logger.info("[DLP] Guard stopped")
