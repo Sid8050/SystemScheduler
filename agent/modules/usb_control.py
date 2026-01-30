@@ -384,52 +384,57 @@ class USBController:
         """Main monitoring loop for USB device changes."""
         if wmi is None:
             return
-        
+
         pythoncom.CoInitialize()
-        
+
         try:
             c = wmi.WMI()
-            
+
             # Monitor device insertions
             watcher = c.Win32_DeviceChangeEvent.watch_for(
                 notification_type="Creation"
             )
-            
+
             while self._running:
                 try:
-                    # Check for new device (with timeout)
-                    event = watcher(timeout_ms=1000)
-                    
+                    # Check for new device (with shorter timeout for faster response)
+                    event = watcher(timeout_ms=500)
+
                     if event:
-                        # Small delay to let device fully initialize
-                        time.sleep(1)
-                        
+                        # Shorter delay - just enough for device to register
+                        time.sleep(0.5)
+
                         # Get current devices
                         current_devices = self._get_connected_usb_devices()
-                        
+
                         for device in current_devices:
                             if device.device_id not in self._connected_devices:
-                                # New device
+                                # New device detected
                                 self._connected_devices[device.device_id] = device
-                                
+                                print(f"[USB] New device: {device.description} ({device.device_type})")
+
                                 # Check if should block
                                 should_block, reason = self._should_block_device(device)
-                                
+
                                 if should_block:
+                                    print(f"[USB] BLOCKING: {device.description} - {reason}")
                                     self._block_device(device, reason)
                                 else:
                                     # Callback for new device
                                     if self.on_device_connected:
                                         self.on_device_connected(device)
-                        
+
                         # Check for removed devices
                         current_ids = {d.device_id for d in current_devices}
                         removed = [did for did in self._connected_devices if did not in current_ids]
-                        
+
                         for device_id in removed:
                             del self._connected_devices[device_id]
-                
+
                 except wmi.x_wmi_timed_out:
+                    # In block mode, periodically scan for any devices that slipped through
+                    if self.mode == USBMode.BLOCK:
+                        self._check_and_block_new_storage()
                     continue
                 except Exception as e:
                     print(f"USB monitor error: {e}")
@@ -509,19 +514,48 @@ class USBController:
         old_mode = self.mode
         self.mode = mode
 
+        print(f"[USB] Mode changing: {old_mode.value if old_mode else 'None'} -> {mode.value}")
+
         # Apply new policy
         if mode == USBMode.BLOCK and self.block_mass_storage:
             if self._registry:
-                self._registry.set_usb_storage_state(False)
-                # Also use removable storage policy for stronger blocking
-                self._registry.block_removable_storage()
+                print("[USB] Applying blocking policies...")
+                # Disable USBSTOR driver
+                result1 = self._registry.set_usb_storage_state(False)
+                print(f"[USB] USBSTOR disabled: {result1}")
+
+                # Apply Group Policy blocking
+                result2 = self._registry.block_removable_storage()
+                print(f"[USB] Removable storage policy applied: {result2}")
+
+                # Force Group Policy refresh for immediate effect
+                self._refresh_group_policy()
+
             # Eject currently connected mass storage devices
             self._eject_all_mass_storage()
+
         elif old_mode == USBMode.BLOCK and mode != USBMode.BLOCK:
             # Re-enable USB
+            print("[USB] Re-enabling USB storage...")
             if self._registry:
                 self._registry.set_usb_storage_state(True)
                 self._registry.unblock_removable_storage()
+                self._refresh_group_policy()
+
+    def _refresh_group_policy(self):
+        """Force Windows to refresh Group Policy for immediate effect."""
+        try:
+            import subprocess
+            # Run gpupdate to refresh policies
+            subprocess.run(
+                ['gpupdate', '/force'],
+                capture_output=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            print("[USB] Group Policy refreshed")
+        except Exception as e:
+            print(f"[USB] Failed to refresh Group Policy: {e}")
 
     def _eject_all_mass_storage(self):
         """Eject all currently connected mass storage devices (NOT mice/keyboards/network)."""
@@ -566,6 +600,25 @@ class USBController:
                         self.on_device_blocked(device, "USB blocking enabled - device ejected")
                 except Exception as e:
                     print(f"Error ejecting device {device.drive_letter}: {e}")
+
+    def _check_and_block_new_storage(self):
+        """Periodically check for any mass storage that slipped through and block it."""
+        if self.mode != USBMode.BLOCK:
+            return
+
+        try:
+            current_devices = self._get_connected_usb_devices()
+            for device in current_devices:
+                if device.device_id not in self._connected_devices:
+                    self._connected_devices[device.device_id] = device
+
+                # Check if it's a mass storage device that should be blocked
+                if device.device_type == 'mass_storage' and device.drive_letter:
+                    if not self._is_protected_device(device) and not device.matches_whitelist(self.whitelist):
+                        print(f"[USB] Catching missed storage device: {device.description}")
+                        self._block_device(device, "Mass storage devices are blocked")
+        except Exception as e:
+            print(f"[USB] Error in periodic check: {e}")
 
     def rescan_devices(self):
         """Force a rescan of connected USB devices."""
