@@ -336,13 +336,20 @@ class EndpointSecurityAgent:
                     for site in current_blocked - new_blocked:
                         self.network_guard.remove_blocked_site(site)
 
-            # 2. Update USB Whitelist
+            # 2. Update USB Whitelist and Mode
             if 'usb' in config_data and self.usb_controller:
                 usb_cfg = config_data['usb']
                 whitelist = usb_cfg.get('whitelist', [])
                 self.usb_controller.whitelist = whitelist
+
                 if 'mode' in usb_cfg:
-                    self.usb_controller.set_mode(USBMode(usb_cfg['mode']))
+                    new_mode = USBMode(usb_cfg['mode'])
+                    if self.usb_controller.mode != new_mode:
+                        self.logger.info(f"SYNC: USB mode changing from {self.usb_controller.mode.value} to {new_mode.value}")
+                        self.usb_controller.set_mode(new_mode)
+
+                # Refresh device list
+                self.usb_controller.rescan_devices()
 
             # 3. Update DLP (Upload Blocking)
             dlp_cfg = config_data.get('uploads')

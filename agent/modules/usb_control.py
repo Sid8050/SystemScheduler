@@ -288,178 +288,6 @@ class USBController:
                 pass
         
         return devices
-
-        
-        try:
-            pythoncom.CoInitialize()
-            c = wmi.WMI()
-            
-            # Scan all PnP Entities that look like USB or HID
-            for pnp in c.Win32_PnPEntity():
-                pnp_id = pnp.PNPDeviceID or ''
-                
-                # Check for VID and PID in the ID - this is the best way to find USB devices
-                # capturing USB\, HID\, BTH\ etc.
-                if 'VID_' not in pnp_id.upper() or 'PID_' not in pnp_id.upper():
-                    continue
-                
-                if any(d.device_id == pnp_id for d in devices):
-                    continue
-
-                service = (pnp.Service or '').lower()
-                compatible_ids = pnp.CompatibleID or []
-                desc = (pnp.Description or pnp.Caption or '').lower()
-                
-                device_type = 'unknown'
-                if service == 'usbstor' or 'USBSTOR' in pnp_id.upper():
-                    device_type = 'mass_storage'
-                elif service == 'hidusb' or 'keyboard' in desc or 'mouse' in desc:
-                    device_type = 'hid'
-                elif 'usbhub' in service:
-                    device_type = 'hub'
-                elif 'mtp' in str(compatible_ids).lower() or 'mtp' in service:
-                    device_type = 'mtp'
-                elif 'ptp' in str(compatible_ids).lower() or 'ptp' in service:
-                    device_type = 'ptp'
-                
-                parsed = self._parse_device_id(pnp_id)
-                
-                devices.append(USBDevice(
-                    device_id=pnp_id,
-                    vendor_id=parsed['vid'],
-                    product_id=parsed['pid'],
-                    serial_number=parsed['serial'] or None,
-                    description=pnp.Caption or pnp.Description or 'USB Device',
-                    drive_letter=None,
-                    device_type=device_type,
-                    connected_time=datetime.now()
-                ))
-
-            # Enrich Mass Storage with drive letters
-            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
-                disk_pnp = disk.PNPDeviceID
-                
-                drive_letter = None
-                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
-                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
-                        drive_letter = logical.DeviceID
-                        break
-                
-                # Try to find match in PnP list
-                # Match by Serial if possible
-                disk_parsed = self._parse_device_id(disk_pnp)
-                
-                found = False
-                for d in devices:
-                    if d.device_id == disk_pnp:
-                        d.drive_letter = drive_letter
-                        d.device_type = 'mass_storage'
-                        found = True
-                        break
-                    if d.serial_number and disk_parsed['serial'] and d.serial_number == disk_parsed['serial']:
-                        d.drive_letter = drive_letter
-                        d.device_type = 'mass_storage'
-                        found = True
-                        break
-                
-                if not found:
-                    devices.append(USBDevice(
-                        device_id=disk_pnp,
-                        vendor_id=disk_parsed['vid'],
-                        product_id=disk_parsed['pid'],
-                        serial_number=disk_parsed['serial'] or None,
-                        description=disk.Caption or disk.Model or 'USB Storage Device',
-                        drive_letter=drive_letter,
-                        device_type='mass_storage',
-                        connected_time=datetime.now()
-                    ))
-            
-        except Exception as e:
-            print(f"Error in USB scan: {e}")
-        finally:
-            try:
-                pythoncom.CoUninitialize()
-            except:
-                pass
-        
-        return devices
-
-        
-        try:
-            pythoncom.CoInitialize()
-            c = wmi.WMI()
-            
-            for pnp in c.Win32_PnPEntity():
-                pnp_id = pnp.PNPDeviceID or ''
-                if not pnp_id.startswith('USB'):
-                    continue
-                
-                if any(d.device_id == pnp_id for d in devices):
-                    continue
-
-                service = (pnp.Service or '').lower()
-                compatible_ids = pnp.CompatibleID or []
-                
-                device_type = 'unknown'
-                if service == 'usbstor' or 'USBSTOR' in pnp_id:
-                    device_type = 'mass_storage'
-                elif service == 'hidusb' or 'HID_DEVICE' in pnp_id:
-                    device_type = 'hid'
-                elif service == 'usbhub':
-                    device_type = 'hub'
-                elif 'mtp' in str(compatible_ids).lower():
-                    device_type = 'mtp'
-                elif 'ptp' in str(compatible_ids).lower():
-                    device_type = 'ptp'
-                
-                parsed = self._parse_device_id(pnp_id)
-                
-                devices.append(USBDevice(
-                    device_id=pnp_id,
-                    vendor_id=parsed['vid'],
-                    product_id=parsed['pid'],
-                    serial_number=parsed['serial'] or None,
-                    description=pnp.Caption or pnp.Description or 'Unknown USB Device',
-                    drive_letter=None,
-                    device_type=device_type,
-                    connected_time=datetime.now()
-                ))
-
-            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
-                pnp_id = disk.PNPDeviceID
-                
-                drive_letter = None
-                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
-                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
-                        drive_letter = logical.DeviceID
-                        break
-                
-                existing = next((d for d in devices if d.device_id == pnp_id), None)
-                if existing:
-                    existing.drive_letter = drive_letter
-                    existing.device_type = 'mass_storage'
-                else:
-                    parsed = self._parse_device_id(pnp_id)
-                    devices.append(USBDevice(
-                        device_id=pnp_id,
-                        vendor_id=parsed['vid'],
-                        product_id=parsed['pid'],
-                        serial_number=parsed['serial'] or None,
-                        description=disk.Caption or disk.Model or 'USB Storage Device',
-                        drive_letter=drive_letter,
-                        device_type='mass_storage',
-                        connected_time=datetime.now()
-                    ))
-            
-        except Exception as e:
-            print(f"Error getting USB devices: {e}")
-        finally:
-            try:
-                pythoncom.CoUninitialize()
-            except:
-                pass
-        
-        return devices
     
     def _should_block_device(self, device: USBDevice) -> tuple:
         """
@@ -578,18 +406,21 @@ class USBController:
         """Start USB monitoring."""
         if self._running:
             return
-        
+
         self._running = True
-        
+
         # Initial device scan
         for device in self._get_connected_usb_devices():
             self._connected_devices[device.device_id] = device
-        
+
         # Apply initial blocking policy if in block mode
         if self.mode == USBMode.BLOCK and self.block_mass_storage:
             if self._registry:
                 self._registry.set_usb_storage_state(False)
-        
+                self._registry.block_removable_storage()
+            # Eject non-whitelisted mass storage devices
+            self._eject_all_mass_storage()
+
         # Start monitor thread
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
@@ -597,16 +428,20 @@ class USBController:
     def stop(self):
         """Stop USB monitoring."""
         self._running = False
-        
+
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5)
-        
+
         # Re-enable USB storage if we disabled it
         if self.mode == USBMode.BLOCK and self._registry:
             self._registry.set_usb_storage_state(True)
+            self._registry.unblock_removable_storage()
     
     def get_connected_devices(self) -> List[USBDevice]:
         """Get list of currently connected USB devices."""
+        # If no devices cached, do a fresh scan
+        if not self._connected_devices:
+            self.rescan_devices()
         return list(self._connected_devices.values())
     
     def is_device_allowed(self, device: USBDevice) -> bool:
@@ -637,15 +472,64 @@ class USBController:
         """Change the USB control mode."""
         old_mode = self.mode
         self.mode = mode
-        
+
         # Apply new policy
         if mode == USBMode.BLOCK and self.block_mass_storage:
             if self._registry:
                 self._registry.set_usb_storage_state(False)
+                # Also use removable storage policy for stronger blocking
+                self._registry.block_removable_storage()
+            # Eject currently connected mass storage devices
+            self._eject_all_mass_storage()
         elif old_mode == USBMode.BLOCK and mode != USBMode.BLOCK:
             # Re-enable USB
             if self._registry:
                 self._registry.set_usb_storage_state(True)
+                self._registry.unblock_removable_storage()
+
+    def _eject_all_mass_storage(self):
+        """Eject all currently connected mass storage devices."""
+        if win32file is None:
+            return
+
+        for device in list(self._connected_devices.values()):
+            if device.device_type == 'mass_storage' and device.drive_letter:
+                # Check if whitelisted
+                if device.matches_whitelist(self.whitelist):
+                    continue
+                try:
+                    drive = f"\\\\.\\{device.drive_letter}"
+                    handle = win32file.CreateFile(
+                        drive,
+                        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                        win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
+                        None,
+                        win32file.OPEN_EXISTING,
+                        0,
+                        None
+                    )
+                    # Lock and dismount volume first
+                    try:
+                        win32file.DeviceIoControl(handle, 0x00090018, None, None)  # FSCTL_LOCK_VOLUME
+                        win32file.DeviceIoControl(handle, 0x00090020, None, None)  # FSCTL_DISMOUNT_VOLUME
+                    except Exception:
+                        pass
+                    # Eject media
+                    win32file.DeviceIoControl(handle, 0x2D4808, None, None)  # IOCTL_STORAGE_EJECT_MEDIA
+                    win32file.CloseHandle(handle)
+
+                    if self.on_device_blocked:
+                        self.on_device_blocked(device, "USB blocking enabled - device ejected")
+                except Exception as e:
+                    print(f"Error ejecting device {device.drive_letter}: {e}")
+
+    def rescan_devices(self):
+        """Force a rescan of connected USB devices."""
+        devices = self._get_connected_usb_devices()
+        self._connected_devices.clear()
+        for device in devices:
+            self._connected_devices[device.device_id] = device
+        return devices
     
     def get_device_history(self) -> List[Dict]:
         """Get history of USB devices that have been connected (from registry)."""
