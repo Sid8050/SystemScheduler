@@ -207,6 +207,190 @@ class USBController:
             
             for pnp in c.Win32_PnPEntity():
                 pnp_id = pnp.PNPDeviceID or ''
+                
+                if 'VID_' not in pnp_id.upper() or 'PID_' not in pnp_id.upper():
+                    continue
+                
+                if any(d.device_id == pnp_id for d in devices):
+                    continue
+
+                service = (pnp.Service or '').lower()
+                compatible_ids = pnp.CompatibleID or []
+                desc = (pnp.Description or pnp.Caption or '').lower()
+                
+                device_type = 'unknown'
+                if service == 'usbstor' or 'USBSTOR' in pnp_id.upper():
+                    device_type = 'mass_storage'
+                elif service == 'hidusb' or 'keyboard' in desc or 'mouse' in desc:
+                    device_type = 'hid'
+                elif 'usbhub' in service:
+                    device_type = 'hub'
+                elif 'mtp' in str(compatible_ids).lower() or 'mtp' in service:
+                    device_type = 'mtp'
+                elif 'ptp' in str(compatible_ids).lower() or 'ptp' in service:
+                    device_type = 'ptp'
+                
+                parsed = self._parse_device_id(pnp_id)
+                
+                devices.append(USBDevice(
+                    device_id=pnp_id,
+                    vendor_id=parsed['vid'],
+                    product_id=parsed['pid'],
+                    serial_number=parsed['serial'] or None,
+                    description=pnp.Caption or pnp.Description or 'USB Device',
+                    drive_letter=None,
+                    device_type=device_type,
+                    connected_time=datetime.now()
+                ))
+
+            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
+                disk_pnp = disk.PNPDeviceID
+                
+                drive_letter = None
+                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
+                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
+                        drive_letter = logical.DeviceID
+                        break
+                
+                disk_parsed = self._parse_device_id(disk_pnp)
+                
+                found = False
+                for d in devices:
+                    if d.device_id == disk_pnp:
+                        d.drive_letter = drive_letter
+                        d.device_type = 'mass_storage'
+                        found = True
+                        break
+                    if d.serial_number and disk_parsed['serial'] and d.serial_number == disk_parsed['serial']:
+                        d.drive_letter = drive_letter
+                        d.device_type = 'mass_storage'
+                        found = True
+                        break
+                
+                if not found:
+                    devices.append(USBDevice(
+                        device_id=disk_pnp,
+                        vendor_id=disk_parsed['vid'],
+                        product_id=disk_parsed['pid'],
+                        serial_number=disk_parsed['serial'] or None,
+                        description=disk.Caption or disk.Model or 'USB Storage Device',
+                        drive_letter=drive_letter,
+                        device_type='mass_storage',
+                        connected_time=datetime.now()
+                    ))
+            
+        except Exception as e:
+            print(f"Error in USB scan: {e}")
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except:
+                pass
+        
+        return devices
+
+        
+        try:
+            pythoncom.CoInitialize()
+            c = wmi.WMI()
+            
+            # Scan all PnP Entities that look like USB or HID
+            for pnp in c.Win32_PnPEntity():
+                pnp_id = pnp.PNPDeviceID or ''
+                
+                # Check for VID and PID in the ID - this is the best way to find USB devices
+                # capturing USB\, HID\, BTH\ etc.
+                if 'VID_' not in pnp_id.upper() or 'PID_' not in pnp_id.upper():
+                    continue
+                
+                if any(d.device_id == pnp_id for d in devices):
+                    continue
+
+                service = (pnp.Service or '').lower()
+                compatible_ids = pnp.CompatibleID or []
+                desc = (pnp.Description or pnp.Caption or '').lower()
+                
+                device_type = 'unknown'
+                if service == 'usbstor' or 'USBSTOR' in pnp_id.upper():
+                    device_type = 'mass_storage'
+                elif service == 'hidusb' or 'keyboard' in desc or 'mouse' in desc:
+                    device_type = 'hid'
+                elif 'usbhub' in service:
+                    device_type = 'hub'
+                elif 'mtp' in str(compatible_ids).lower() or 'mtp' in service:
+                    device_type = 'mtp'
+                elif 'ptp' in str(compatible_ids).lower() or 'ptp' in service:
+                    device_type = 'ptp'
+                
+                parsed = self._parse_device_id(pnp_id)
+                
+                devices.append(USBDevice(
+                    device_id=pnp_id,
+                    vendor_id=parsed['vid'],
+                    product_id=parsed['pid'],
+                    serial_number=parsed['serial'] or None,
+                    description=pnp.Caption or pnp.Description or 'USB Device',
+                    drive_letter=None,
+                    device_type=device_type,
+                    connected_time=datetime.now()
+                ))
+
+            # Enrich Mass Storage with drive letters
+            for disk in c.Win32_DiskDrive(InterfaceType='USB'):
+                disk_pnp = disk.PNPDeviceID
+                
+                drive_letter = None
+                for partition in disk.associators("Win32_DiskDriveToDiskPartition"):
+                    for logical in partition.associators("Win32_LogicalDiskToPartition"):
+                        drive_letter = logical.DeviceID
+                        break
+                
+                # Try to find match in PnP list
+                # Match by Serial if possible
+                disk_parsed = self._parse_device_id(disk_pnp)
+                
+                found = False
+                for d in devices:
+                    if d.device_id == disk_pnp:
+                        d.drive_letter = drive_letter
+                        d.device_type = 'mass_storage'
+                        found = True
+                        break
+                    if d.serial_number and disk_parsed['serial'] and d.serial_number == disk_parsed['serial']:
+                        d.drive_letter = drive_letter
+                        d.device_type = 'mass_storage'
+                        found = True
+                        break
+                
+                if not found:
+                    devices.append(USBDevice(
+                        device_id=disk_pnp,
+                        vendor_id=disk_parsed['vid'],
+                        product_id=disk_parsed['pid'],
+                        serial_number=disk_parsed['serial'] or None,
+                        description=disk.Caption or disk.Model or 'USB Storage Device',
+                        drive_letter=drive_letter,
+                        device_type='mass_storage',
+                        connected_time=datetime.now()
+                    ))
+            
+        except Exception as e:
+            print(f"Error in USB scan: {e}")
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except:
+                pass
+        
+        return devices
+
+        
+        try:
+            pythoncom.CoInitialize()
+            c = wmi.WMI()
+            
+            for pnp in c.Win32_PnPEntity():
+                pnp_id = pnp.PNPDeviceID or ''
                 if not pnp_id.startswith('USB'):
                     continue
                 
