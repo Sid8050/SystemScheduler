@@ -56,6 +56,21 @@ app.include_router(api_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(schedules_router, prefix="/api/v1/schedules", tags=["schedules"])
 
+# Global Exception Handler to ensure CORS on 500s
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"GLOBAL ERROR: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
 # Middleware to handle redirects from blocked sites
 @app.middleware("http")
 async def block_redirect_middleware(request: Request, call_next):

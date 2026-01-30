@@ -453,12 +453,18 @@ async def get_event_stats(
 @router.get("/policies")
 async def list_policies(db: AsyncSession = Depends(get_db)):
     """List all policies."""
-    result = await db.execute(
-        select(Policy).options(selectinload(Policy.endpoints))
-    )
-    policies = result.scalars().all()
-    
-    return {"policies": [p.to_dict() for p in policies]}
+    try:
+        result = await db.execute(
+            select(Policy).options(selectinload(Policy.endpoints))
+        )
+        policies = result.scalars().all()
+        
+        return {"policies": [p.to_dict() for p in policies]}
+    except Exception as e:
+        print(f"Error in list_policies: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 from sqlalchemy.exc import IntegrityError
@@ -657,21 +663,29 @@ async def get_all_connected_usb(
     db: AsyncSession = Depends(get_db)
 ):
     """Get all currently connected USB devices across all endpoints."""
-    result = await db.execute(
-        select(Endpoint).where(Endpoint.status == EndpointStatus.ONLINE)
-    )
-    endpoints = result.scalars().all()
-    
-    all_devices = []
-    for endpoint in endpoints:
-        if endpoint.connected_usb_devices:
-            for device in endpoint.connected_usb_devices:
-                device_info = device.copy()
-                device_info['hostname'] = endpoint.hostname
-                device_info['endpoint_id'] = endpoint.id
-                all_devices.append(device_info)
-                
-    return {"devices": all_devices}
+    try:
+        result = await db.execute(
+            select(Endpoint).where(Endpoint.status == EndpointStatus.ONLINE)
+        )
+        endpoints = result.scalars().all()
+        
+        all_devices = []
+        for endpoint in endpoints:
+            usb_list = endpoint.connected_usb_devices
+            if usb_list and isinstance(usb_list, list):
+                for device in usb_list:
+                    if isinstance(device, dict):
+                        device_info = device.copy()
+                        device_info['hostname'] = endpoint.hostname
+                        device_info['endpoint_id'] = endpoint.id
+                        all_devices.append(device_info)
+                        
+        return {"devices": all_devices}
+    except Exception as e:
+        print(f"Error in get_all_connected_usb: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Upload Approvals API
