@@ -39,12 +39,17 @@ def clean():
 
 def check_requirements():
     """Check if required packages are installed."""
-    required = ["pyinstaller", "pystray", "pillow"]
+    # Map pip package names to their import names
+    required = {
+        "pyinstaller": "PyInstaller",
+        "pystray": "pystray",
+        "pillow": "PIL",
+    }
     missing = []
 
-    for pkg in required:
+    for pkg, import_name in required.items():
         try:
-            __import__(pkg.replace("-", "_"))
+            __import__(import_name)
         except ImportError:
             missing.append(pkg)
 
